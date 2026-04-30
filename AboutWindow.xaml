@@ -1,0 +1,75 @@
+<Window x:Class="AskaServerManager.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="About" Height="350" Width="400"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#121212">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="DarkTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="ASKA Dedicated Server Manager" 
+                   FontSize="18" FontWeight="Bold" Foreground="#D4A017" 
+                   HorizontalAlignment="Center" Margin="0,0,0,10"/>
+
+        <TextBlock x:Name="VersionText" Grid.Row="1" 
+                   FontSize="14" Foreground="#C8A87C"
+                   HorizontalAlignment="Center" Margin="0,0,0,5"/>
+
+        <TextBlock Grid.Row="2" Text="Developer: zloj" 
+                   FontSize="14" Foreground="#C8A87C"
+                   HorizontalAlignment="Center" Margin="0,0,0,5"/>
+
+        <TextBlock x:Name="DotNetVersionText" Grid.Row="3" 
+                   FontSize="11" Foreground="#666666"
+                   HorizontalAlignment="Center" Margin="0,0,0,10"/>
+
+        <StackPanel Grid.Row="4" VerticalAlignment="Center">
+            <TextBlock Text="Independent administration tool." 
+                       FontSize="12" Foreground="#888888" HorizontalAlignment="Center" TextAlignment="Center"/>
+            <TextBlock Text="Not affiliated with Sand Sailor Studio." 
+                       FontSize="10" Foreground="#555555" HorizontalAlignment="Center" 
+                       FontStyle="Italic" Margin="0,5,0,10"/>
+        </StackPanel>
+
+        <Button Grid.Row="5" Content="OK" Width="100" Height="30"
+        HorizontalAlignment="Center" Background="#2d2d2d"
+        Foreground="#D4A017" BorderThickness="1" BorderBrush="#4a1515"
+        Cursor="Arrow" Click="OkButton_Click">
+            <Button.Style>
+                <Style TargetType="Button">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="4" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="border" Property="Background" Value="#4a2a10"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Button.Style>
+        </Button>
+    </Grid>
+</Window>

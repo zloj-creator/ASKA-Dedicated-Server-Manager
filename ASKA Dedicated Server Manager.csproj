@@ -1,0 +1,105 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+	<NoWarn>CA1416</NoWarn>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>AskaServerManager</AssemblyName>
+    <RootNamespace>AskaServerManager</RootNamespace>
+	  <Version>$(AssemblyVersion)</Version>
+    <AssemblyVersion>1.3.2.1445</AssemblyVersion>
+    <FileVersion>1.3.2.1445</FileVersion>
+    <PackageIcon></PackageIcon>
+    <AssemblyTitle>Aska Dedicated Server Manager</AssemblyTitle>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	<ShouldCreateLogs>False</ShouldCreateLogs>
+	<AdvancedSettingsExpanded>True</AdvancedSettingsExpanded>
+	<UpdateAssemblyVersion>True</UpdateAssemblyVersion>
+	<UpdateAssemblyFileVersion>True</UpdateAssemblyFileVersion>
+	<UpdateAssemblyInfoVersion>True</UpdateAssemblyInfoVersion>
+	<UpdatePackageVersion>False</UpdatePackageVersion>
+	<AssemblyInfoVersionType>SettingsVersion</AssemblyInfoVersionType>
+	<InheritWinAppVersionFrom>None</InheritWinAppVersionFrom>
+	<AssemblyVersionSettings>None.None.None.Increment</AssemblyVersionSettings>
+	<AssemblyInfoVersionSettings>None.None.None.None</AssemblyInfoVersionSettings>
+	<PrimaryVersionType>AssemblyFileVersionAttribute</PrimaryVersionType>
+	<AssemblyFileVersionSettings>None.None.None.Increment</AssemblyFileVersionSettings>
+	<PackageVersionSettings>None.None.None.Increment</PackageVersionSettings>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <ShouldCreateLogs>False</ShouldCreateLogs>
+    <AdvancedSettingsExpanded>True</AdvancedSettingsExpanded>
+    <UpdateAssemblyVersion>True</UpdateAssemblyVersion>
+    <UpdateAssemblyFileVersion>True</UpdateAssemblyFileVersion>
+    <UpdateAssemblyInfoVersion>True</UpdateAssemblyInfoVersion>
+    <UpdatePackageVersion>False</UpdatePackageVersion>
+    <AssemblyInfoVersionType>SettingsVersion</AssemblyInfoVersionType>
+    <InheritWinAppVersionFrom>None</InheritWinAppVersionFrom>
+	<AssemblyVersionSettings>None.None.None.Increment</AssemblyVersionSettings>
+	<AssemblyFileVersionSettings>None.None.None.Increment</AssemblyFileVersionSettings>
+    <PackageVersionSettings>None.None.None.Increment</PackageVersionSettings>
+    <AssemblyInfoVersionSettings>None.None.None.None</AssemblyInfoVersionSettings>
+    <PrimaryVersionType>AssemblyFileVersionAttribute</PrimaryVersionType>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove=".gitignore" />
+    <None Remove="128.ico" />
+    <None Remove="430e8b65-f6f8-4762-95b9-e4f19d53f0f9.png" />
+    <None Remove="askamanager_background_.png" />
+    <None Remove="ChatGPT Image Apr 20, 2026, 01_34_06 AM.png" />
+    <None Remove="записи aska dedicated server manager.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Remove="Styles.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="icon_03.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="faq.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="join.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="leave.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
+  <PropertyGroup>
+	  <Version>$(AssemblyVersion)</Version>
+	  <ApplicationIcon>icon_03.ico</ApplicationIcon>
+	  <NuGetAudit>False</NuGetAudit>
+	  <BaseOutputPath>C:\Users\Administrator\source\repos\ASKA Dedicated Server Manager\bin</BaseOutputPath>
+	  <PackageOutputPath>C:\Users\Administrator\source\repos\ASKA Dedicated Server Manager\bin\Debug\</PackageOutputPath>
+  </PropertyGroup>
+</Project>

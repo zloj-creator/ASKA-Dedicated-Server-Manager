@@ -1,0 +1,34 @@
+<Window x:Class="AskaServerManager.ErrorDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Error" Height="Auto" Width="400" MinHeight="150"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Background="#3a3a3a" Foreground="#FFFFFF"
+        WindowStyle="None"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="⚠️" FontSize="28" Foreground="#ff6666" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+
+        <TextBlock x:Name="MessageText" Grid.Row="1"
+                   Text="Error message" FontSize="14"
+                   TextWrapping="Wrap" TextAlignment="Center"
+                   VerticalAlignment="Center" Margin="0,10,0,20"
+                   Foreground="#FFFFFF" Background="Transparent"/>
+
+        <Button x:Name="BtnOk" Grid.Row="2" Content="OK" Width="100" Height="32"
+                HorizontalAlignment="Center" Click="BtnOk_Click"
+                Background="#2d2d2d" Foreground="#D4A017" BorderBrush="#555555"
+                BorderThickness="1" Cursor="Hand"/>
+    </Grid>
+</Window>
