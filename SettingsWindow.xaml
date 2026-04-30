@@ -67,7 +67,7 @@
                                 BorderBrush="{TemplateBinding BorderBrush}" 
                                 BorderThickness="{TemplateBinding BorderThickness}" 
                                 CornerRadius="4">
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="2"/>
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="2" Padding="0,0,0,0"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -140,7 +140,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="0,0,10,0" Margin="0,0,0,10">
             <StackPanel>
                 <!-- Server Paths -->
                 <GroupBox Header="Server Paths">
