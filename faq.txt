@@ -1,0 +1,32 @@
+## ASKA Dedicated Server Manager
+
+1. Initial Setup and Installation
+
+* Specify your server folder in Settings (⚙️). If you don't have the server files yet, select Menu → Server → Install/Update. The Manager will automatically download the server via SteamCMD.
+* Important: Ensure steamcmd.exe is allowed through your Firewall.
+
+2. Getting a Game Server Login Token (GSLT)
+
+* A token is required for the server to be visible. Get one here: Steam Game Server Management.
+* Use App ID: 1898300 and any memo name (e.g., AskaServer).
+* Copy and paste the token into the Authentication Token field in the Config Editor.
+
+3. Server Configuration (Edit Configuration)
+
+* Adjust all server settings via Menu → Server → Edit Configuration.
+* Note: World generation settings (Seed, Mode - Custom, Terrain, etc.) must be configured BEFORE the initial launch. Once the world is generated (and a Save ID is assigned), these specific settings can no longer be modified.
+
+4. Console and Logging
+
+* Type list in the console to view all available commands.
+* To see the raw server output in real-time, enable Menu → Log → Show server log.
+* The Manager plays an audio notification whenever a player joins or leaves the server.
+
+5. Troubleshooting
+
+* If you encounter errors during installation or updates:
+1. Make sure the server process is completely stopped.
+   2. Run the Manager as an Administrator.
+   3. Add the server directory and Tools\SteamCmd folder to your Antivirus exclusions.
+   
+6. Thank you for using ASKA Dedicated Server manager. Best game Viking!

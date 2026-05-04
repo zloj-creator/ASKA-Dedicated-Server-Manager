@@ -1,0 +1,100 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+	<NoWarn>CA1416</NoWarn>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>AskaServerManager</AssemblyName>
+    <RootNamespace>AskaServerManager</RootNamespace>
+	  <Version>$(AssemblyVersion)</Version>
+    <AssemblyVersion>1.3.3.1200</AssemblyVersion>
+    <FileVersion>1.3.3.1200</FileVersion>
+    <PackageIcon></PackageIcon>
+    <AssemblyTitle>Aska Dedicated Server Manager</AssemblyTitle>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	<ShouldCreateLogs>False</ShouldCreateLogs>
+	<AdvancedSettingsExpanded>True</AdvancedSettingsExpanded>
+	<UpdateAssemblyVersion>True</UpdateAssemblyVersion>
+	<UpdateAssemblyFileVersion>True</UpdateAssemblyFileVersion>
+	<UpdateAssemblyInfoVersion>True</UpdateAssemblyInfoVersion>
+	<UpdatePackageVersion>False</UpdatePackageVersion>
+	<AssemblyInfoVersionType>SettingsVersion</AssemblyInfoVersionType>
+	<InheritWinAppVersionFrom>None</InheritWinAppVersionFrom>
+	<AssemblyVersionSettings>None.None.None.Increment</AssemblyVersionSettings>
+	<AssemblyInfoVersionSettings>None.None.None.None</AssemblyInfoVersionSettings>
+	<PrimaryVersionType>AssemblyFileVersionAttribute</PrimaryVersionType>
+	<AssemblyFileVersionSettings>None.None.None.Increment</AssemblyFileVersionSettings>
+	<PackageVersionSettings>None.None.None.Increment</PackageVersionSettings>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <ShouldCreateLogs>False</ShouldCreateLogs>
+    <AdvancedSettingsExpanded>True</AdvancedSettingsExpanded>
+    <UpdateAssemblyVersion>True</UpdateAssemblyVersion>
+    <UpdateAssemblyFileVersion>True</UpdateAssemblyFileVersion>
+    <UpdateAssemblyInfoVersion>True</UpdateAssemblyInfoVersion>
+    <UpdatePackageVersion>False</UpdatePackageVersion>
+    <AssemblyInfoVersionType>SettingsVersion</AssemblyInfoVersionType>
+    <InheritWinAppVersionFrom>None</InheritWinAppVersionFrom>
+	<AssemblyVersionSettings>None.None.None.Increment</AssemblyVersionSettings>
+	<AssemblyFileVersionSettings>None.None.None.Increment</AssemblyFileVersionSettings>
+    <PackageVersionSettings>None.None.None.Increment</PackageVersionSettings>
+    <AssemblyInfoVersionSettings>None.None.None.None</AssemblyInfoVersionSettings>
+    <PrimaryVersionType>AssemblyFileVersionAttribute</PrimaryVersionType>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove=".gitignore" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Remove="Styles.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="icon_03.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="faq.txt">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="join.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="leave.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
+  <PropertyGroup>
+	  <Version>$(AssemblyVersion)</Version>
+	  <ApplicationIcon>icon_03.ico</ApplicationIcon>
+	  <NuGetAudit>False</NuGetAudit>
+  </PropertyGroup>
+</Project>
