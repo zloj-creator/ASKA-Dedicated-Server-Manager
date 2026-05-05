@@ -815,8 +815,10 @@ public partial class MainWindow : Window
     private void ParseServerLogForPlayers(string line)
     {
         string trimmed = line.Trim();
-        int idxDisconnected = trimmed.IndexOf("disconnected", StringComparison.OrdinalIgnoreCase);
-        if (idxDisconnected >= 0)
+
+        // Проверка на отключение: "<имя> disconnected!"
+        int idxDisconnected = trimmed.IndexOf(" disconnected!", StringComparison.OrdinalIgnoreCase);
+        if (idxDisconnected > 0)
         {
             string playerName = trimmed.Substring(0, idxDisconnected).Trim();
             if (previousPlayers.Remove(playerName))
@@ -824,27 +826,22 @@ public partial class MainWindow : Window
                 Log($"{playerName} disconnected", "LEAVE");
                 PlayLeaveSound();
             }
+            return; // Важно: выходим, чтобы не проверять подключение
         }
-        else
+
+        // Проверка на подключение: "<имя> connected!"
+        int idxConnected = trimmed.IndexOf(" connected!", StringComparison.OrdinalIgnoreCase);
+        if (idxConnected > 0)
         {
-            int idxConnected = trimmed.IndexOf("connected", StringComparison.OrdinalIgnoreCase);
-            if (idxConnected >= 0)
+            string playerName = trimmed.Substring(0, idxConnected).Trim();
+            if (!string.IsNullOrEmpty(playerName) && !previousPlayers.Contains(playerName))
             {
-                string playerName = trimmed.Substring(0, idxConnected).Trim();
-                if (!string.IsNullOrEmpty(playerName) && !previousPlayers.Contains(playerName))
-                {
-                    previousPlayers.Add(playerName);
-                    Log($"{playerName} connected", "JOIN");
-                    PlayJoinSound();
-                }
+                previousPlayers.Add(playerName);
+                Log($"{playerName} connected", "JOIN");
+                PlayJoinSound();
             }
+            return;
         }
-        _lastPlayersCount = previousPlayers.Count;
-        Dispatcher.Invoke(() =>
-        {
-            TxtPlayerNames.Text = previousPlayers.Count > 0 ? "In game: " + string.Join(", ", previousPlayers) : "";
-            UpdateGameTimeDisplay(); // принудительное обновление инфопанели
-        });
     }
 
     // ---- Settings handling ----
@@ -2328,7 +2325,8 @@ public partial class MainWindow : Window
                 BackupProgress.IsIndeterminate = false;
                 BackupProgress.Foreground = Brushes.DodgerBlue;
                 StatusBarText.Text = "Ready";
-                TxtServerStatus.Visibility = Visibility.Visible;
+                //TxtServerStatus.Visibility = Visibility.Visible;
+                UpdateServerInfo();
             });
         }
         catch (Exception ex)

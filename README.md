@@ -1,4 +1,4 @@
-# ASKA Dedicated Server Manager (v1.3.3)
+﻿# ASKA Dedicated Server Manager (v1.3.3)
 
 ### Main Dashboard
 <img width="656" height="758" alt="Screenshot 2026-05-04 113421" src="https://github.com/user-attachments/assets/b6040d45-98af-499c-ac97-95268a91a52d" />
@@ -23,7 +23,7 @@ Designed for stability, ease of use, and automated maintenance.
 *   **Player Notifications:** Audio alerts (Join/Leave) so you never miss a player.
 *   **Plugin Support:** Fully compatible with *AskaMonitor* for advanced game-time and season tracking.
 
-*   ### 🧩 AskaMonitor Plugin (Optional)
+### 🧩 AskaMonitor Plugin (Optional)
 To see game time, and seasons, Days Survived, you need to install the monitoring plugin:
 1.  Install **BepInEx 5.4** into your server directory.
 2.  Download `AskaMonitor.dll` from our [Releases](https://github.com/zloj-creator/ASKA-Dedicated-Server-Manager/releases/tag/v1.3.3) page.
@@ -47,7 +47,7 @@ To see game time, and seasons, Days Survived, you need to install the monitoring
 
 ---
 
-*   ### 📋 Requirements
+### 📋 Requirements
 *   **Operating System:** Windows 10 / 11 (64-bit).
 *   **Runtime:** [.NET 8.0 Desktop Runtime](https://microsoft.com) (or newer) must be installed.
 *   **SteamCMD:** Integrated (Manager will handle this for you).
