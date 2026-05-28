@@ -10,8 +10,8 @@
     <AssemblyName>AskaServerManager</AssemblyName>
     <RootNamespace>AskaServerManager</RootNamespace>
 	  <Version>$(AssemblyVersion)</Version>
-    <AssemblyVersion>1.3.2.1447</AssemblyVersion>
-    <FileVersion>1.3.2.1447</FileVersion>
+    <AssemblyVersion>1.3.4.1226</AssemblyVersion>
+    <FileVersion>1.3.4.1226</FileVersion>
     <PackageIcon></PackageIcon>
     <AssemblyTitle>Aska Dedicated Server Manager</AssemblyTitle>
   </PropertyGroup>
@@ -47,17 +47,23 @@
   </PropertyGroup>
   <ItemGroup>
     <None Remove=".gitignore" />
-    <None Remove="128.ico" />
-    <None Remove="430e8b65-f6f8-4762-95b9-e4f19d53f0f9.png" />
-    <None Remove="askamanager_background_.png" />
-    <None Remove="ChatGPT Image Apr 20, 2026, 01_34_06 AM.png" />
-    <None Remove="записи aska dedicated server manager.txt" />
   </ItemGroup>
   <ItemGroup>
     <Page Remove="Styles.xaml" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="icon_03.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="faq.txt">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="join.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="leave.wav">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
   </ItemGroup>
 
   <ItemGroup>
@@ -81,15 +87,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="faq.txt">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="join.wav">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
-    <None Update="leave.wav">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
     <None Update="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
@@ -99,7 +96,5 @@
 	  <Version>$(AssemblyVersion)</Version>
 	  <ApplicationIcon>icon_03.ico</ApplicationIcon>
 	  <NuGetAudit>False</NuGetAudit>
-	  <BaseOutputPath>C:\Users\Administrator\source\repos\ASKA Dedicated Server Manager\bin</BaseOutputPath>
-	  <PackageOutputPath>C:\Users\Administrator\source\repos\ASKA Dedicated Server Manager\bin\Debug\</PackageOutputPath>
   </PropertyGroup>
 </Project>

@@ -1,19 +1,41 @@
 ﻿using System;
 using System.IO;
 using System.Windows;
+using System.Threading;
 
 namespace AskaServerManager
 {
     public partial class App : System.Windows.Application
     {
+        private static Mutex? _appMutex;
+
         public static AppSettings? Settings { get; set; }
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            bool createdNew;
+            _appMutex = new Mutex(true, @"Global\ASKA_Server_Manager_SingleInstance", out createdNew);
+            if (!createdNew)
+            {
+                System.Windows.MessageBox.Show("ASKA Server Manager is already running!", "Warning",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                Environment.Exit(0);
+                return;
+            }
+
             base.OnStartup(e);
+
             string logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
             if (!Directory.Exists(logDir))
                 Directory.CreateDirectory(logDir);
+        }
+
+        // Опционально: освободить мьютекс при закрытии приложения
+        protected override void OnExit(ExitEventArgs e)
+        {
+            _appMutex?.ReleaseMutex();
+            _appMutex?.Dispose();
+            base.OnExit(e);
         }
     }
 
@@ -31,9 +53,15 @@ namespace AskaServerManager
         public int MaxLogSizeMB { get; set; } = 2;
         public int MaxLogFiles { get; set; } = 100;
         public bool BackupOnStop { get; set; } = false;
-        public bool LoadDailyLogOnStart { get; set; } = true;
+        public bool LoadDailyLogOnStart { get; set; } = false;
         public bool ShowServerLog { get; set; } = false;
-        public bool DontSaveServerLog { get; set; } = true;
+        public bool SaveServerLog { get; set; } = false;
+        public bool CheckForUpdatesAtStart { get; set; } = false;
+        public bool AutoRestartOnStuck { get; set; } = true;
+        public int StuckDetectionSeconds { get; set; } = 300;
 
+        // Новая функция: перезапуск по интервалу с ожиданием игроков
+        public bool AutoRestartIntervalEnabled { get; set; } = false;
+        public int AutoRestartIntervalMinutes { get; set; } = 120; // 2 часа по умолчанию
     }
 }

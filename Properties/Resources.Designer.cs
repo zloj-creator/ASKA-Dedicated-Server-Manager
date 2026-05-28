@@ -59,5 +59,42 @@ namespace AskaServerManager.Properties {
                 resourceCulture = value;
             }
         }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to ## ASKA Dedicated Server Manager
+        ///
+        ///1. Initial Setup and Installation
+        ///
+        ///* Specify your server folder in Settings (⚙️). If you don&apos;t have the server files yet, select Menu → Server → Install/Update. The Manager will automatically download the server via SteamCMD.
+        ///* Important: Ensure steamcmd.exe is allowed through your Firewall.
+        ///
+        ///2. Getting a Game Server Login Token (GSLT)
+        ///
+        ///* A token is required for the server to be visible. Get one here: Steam Game Server Management.
+        ///* Use App ID: 1898300 and any mem [rest of string was truncated]&quot;;.
+        /// </summary>
+        internal static string faq {
+            get {
+                return ResourceManager.GetString("faq", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.IO.UnmanagedMemoryStream similar to System.IO.MemoryStream.
+        /// </summary>
+        internal static System.IO.UnmanagedMemoryStream join {
+            get {
+                return ResourceManager.GetStream("join", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.IO.UnmanagedMemoryStream similar to System.IO.MemoryStream.
+        /// </summary>
+        internal static System.IO.UnmanagedMemoryStream leave {
+            get {
+                return ResourceManager.GetStream("leave", resourceCulture);
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Linq;
@@ -21,7 +21,12 @@ namespace AskaServerManager
         private int _originalLogFiles;
         private bool _originalBackupOnStop;
         private bool _originalLoadDailyLog;
-        private bool _originalDontSaveServerLog;
+        private bool _originalSaveServerLog;
+        private bool _originalCheckUpdates;
+        private bool _originalAutoRestart;
+        private int _originalStuckSeconds;
+        private bool _originalIntervalEnabled;
+        private int _originalIntervalMinutes;
 
         public SettingsWindow(bool isServerRunning)
         {
@@ -29,6 +34,7 @@ namespace AskaServerManager
             NativeMethods.SetDarkTitleBar(this);
             serverRunning = isServerRunning;
             LoadSettings(); // Загружает значения в поля и чекбоксы
+
         }
 
         private void LoadSettings()
@@ -45,7 +51,12 @@ namespace AskaServerManager
                 TxtMaxLogFiles.Text = App.Settings.MaxLogFiles.ToString();
                 ChkBackupOnStop.IsChecked = App.Settings.BackupOnStop;
                 ChkLoadDailyLog.IsChecked = App.Settings.LoadDailyLogOnStart;
-                ChkDontSaveServerLog.IsChecked = App.Settings.DontSaveServerLog;
+                ChkSaveServerLog.IsChecked = App.Settings.SaveServerLog;
+                ChkCheckUpdatesAtStart.IsChecked = App.Settings.CheckForUpdatesAtStart;
+                ChkAutoRestartOnStuck.IsChecked = App.Settings.AutoRestartOnStuck;
+                TxtStuckDetectionSeconds.Text = App.Settings.StuckDetectionSeconds.ToString();
+                ChkAutoRestartInterval.IsChecked = App.Settings.AutoRestartIntervalEnabled;
+                TxtAutoRestartIntervalMinutes.Text = App.Settings.AutoRestartIntervalMinutes.ToString();
             }
 
             // Сохраняем оригинальные значения ПОСЛЕ загрузки (для отслеживания изменений)
@@ -58,7 +69,12 @@ namespace AskaServerManager
             _originalLogFiles = int.TryParse(TxtMaxLogFiles.Text, out int logFiles) ? logFiles : 100;
             _originalBackupOnStop = ChkBackupOnStop.IsChecked == true;
             _originalLoadDailyLog = ChkLoadDailyLog.IsChecked == true;
-            _originalDontSaveServerLog = ChkDontSaveServerLog.IsChecked == true;
+            _originalSaveServerLog = ChkSaveServerLog.IsChecked == true;
+            _originalCheckUpdates = ChkCheckUpdatesAtStart.IsChecked == true;
+            _originalAutoRestart = ChkAutoRestartOnStuck.IsChecked == true;
+            _originalStuckSeconds = int.TryParse(TxtStuckDetectionSeconds.Text, out int stuck) ? stuck : 20;
+            _originalIntervalEnabled = ChkAutoRestartInterval.IsChecked == true;
+            _originalIntervalMinutes = int.TryParse(TxtAutoRestartIntervalMinutes.Text, out int intervalMin) ? intervalMin : 120;
         }
 
         private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
@@ -116,7 +132,7 @@ namespace AskaServerManager
             using (var dialog = new WinForms.FolderBrowserDialog())
             {
                 dialog.Description = "Please select ASKA dedicated server folder";
-                dialog.ShowNewFolderButton = false;
+                dialog.ShowNewFolderButton = true;
                 if (!string.IsNullOrEmpty(TxtServerDirectory.Text))
                     dialog.SelectedPath = TxtServerDirectory.Text;
 
@@ -151,17 +167,36 @@ namespace AskaServerManager
                 new ErrorDialog("Select a valid server folder.", "Validation Error") { Owner = this }.ShowDialog();
                 return;
             }
-            if (string.IsNullOrWhiteSpace(TxtPropertiesFileName.Text))
+
+            string serverDir = TxtServerDirectory.Text;
+            string serverExePath = Path.Combine(serverDir, "AskaServer.exe");
+            bool serverInstalled = File.Exists(serverExePath);
+
+            // --- Проверка конфигурационного файла (только если сервер установлен) ---
+            if (serverInstalled)
             {
-                new ErrorDialog("Enter or select a configuration file\n(e.g. server properties.txt).", "Validation Error") { Owner = this }.ShowDialog();
-                return;
+                if (string.IsNullOrWhiteSpace(TxtPropertiesFileName.Text))
+                {
+                    new ErrorDialog("Select a configuration file\n(e.g. server properties.txt).", "Validation Error") { Owner = this }.ShowDialog();
+                    return;
+                }
+                string fullConfig = Path.Combine(serverDir, TxtPropertiesFileName.Text);
+                if (!File.Exists(fullConfig))
+                {
+                    new ErrorDialog($"Configuration file not found:\n{fullConfig}", "Validation Error") { Owner = this }.ShowDialog();
+                    return;
+                }
             }
-            string fullConfig = Path.Combine(TxtServerDirectory.Text, TxtPropertiesFileName.Text);
-            if (!File.Exists(fullConfig))
+            else
             {
-                new ErrorDialog($"Configuration file not found:\n{fullConfig}", "Validation Error") { Owner = this }.ShowDialog();
-                return;
+                // Сервер не установлен – автоматически подставляем имя конфига, если пусто
+                if (string.IsNullOrWhiteSpace(TxtPropertiesFileName.Text))
+                {
+                    TxtPropertiesFileName.Text = "server properties.txt";
+                }
             }
+
+            // --- Валидация числовых параметров ---
             if (!int.TryParse(TxtBackupIntervalMinutes.Text, out int interval) || interval < 1 || interval > 1440)
             {
                 new ErrorDialog("Backup interval must be a number from 1 to 1440.", "Error") { Owner = this }.ShowDialog();
@@ -182,10 +217,19 @@ namespace AskaServerManager
                 new ErrorDialog("Number of log files must be from 1 to 1000.", "Error") { Owner = this }.ShowDialog();
                 return;
             }
+            if (!int.TryParse(TxtStuckDetectionSeconds.Text, out int stuckSec) || stuckSec < 1 || stuckSec > 300)
+            {
+                new ErrorDialog("Stuck detection delay must be between 1 and 300 seconds. Recomended 300 sec.", "Error") { Owner = this }.ShowDialog();
+                return;
+            }
+            if (!int.TryParse(TxtAutoRestartIntervalMinutes.Text, out int intervalMin) || intervalMin < 1 || intervalMin > 1440)
+            {
+                new ErrorDialog("Auto-restart interval must be between 1 and 1440 minutes.", "Error") { Owner = this }.ShowDialog();
+                return;
+            }
 
             // --- Сбор изменений ---
             var changes = new System.Collections.Generic.List<string>();
-
             if (TxtServerDirectory.Text != _originalServerDir)
                 changes.Add($"Server directory: '{_originalServerDir}' -> '{TxtServerDirectory.Text}'");
             if (TxtPropertiesFileName.Text != _originalPropertiesFile)
@@ -206,9 +250,22 @@ namespace AskaServerManager
             bool loadDailyLog = ChkLoadDailyLog.IsChecked == true;
             if (loadDailyLog != _originalLoadDailyLog)
                 changes.Add($"Load daily log on start: {(_originalLoadDailyLog ? "true" : "false")} -> {(loadDailyLog ? "true" : "false")}");
-            bool dontSaveServerLog = ChkDontSaveServerLog.IsChecked == true;
-            if (dontSaveServerLog != _originalDontSaveServerLog)
-                changes.Add($"Don't save server log: {(_originalDontSaveServerLog ? "true" : "false")} -> {(dontSaveServerLog ? "true" : "false")}");
+            bool saveServerLog = ChkSaveServerLog.IsChecked == true;
+            if (saveServerLog != _originalSaveServerLog)
+                changes.Add($"Save server log: {(_originalSaveServerLog ? "true" : "false")} -> {(saveServerLog ? "true" : "false")}");
+            bool checkUpdates = ChkCheckUpdatesAtStart.IsChecked == true;
+            if (checkUpdates != _originalCheckUpdates)
+                changes.Add($"Check for updates at startup: {_originalCheckUpdates} -> {checkUpdates}");
+            bool autoRestart = ChkAutoRestartOnStuck.IsChecked == true;
+            if (autoRestart != _originalAutoRestart)
+                changes.Add($"Auto-restart on stuck: {_originalAutoRestart} -> {autoRestart}");
+            if (stuckSec != _originalStuckSeconds)
+                changes.Add($"Stuck detection delay: {_originalStuckSeconds} -> {stuckSec} seconds");
+            bool intervalEnabled = ChkAutoRestartInterval.IsChecked == true;
+            if (intervalEnabled != _originalIntervalEnabled)
+                changes.Add($"Scheduled restart enabled: {_originalIntervalEnabled} -> {intervalEnabled}");
+            if (intervalMin != _originalIntervalMinutes)
+                changes.Add($"Scheduled restart interval: {_originalIntervalMinutes} -> {intervalMin} minutes");
 
             if (changes.Count == 0)
             {
@@ -236,7 +293,12 @@ namespace AskaServerManager
             App.Settings.SteamAppId = 1898300;
             App.Settings.BackupOnStop = backupOnStop;
             App.Settings.LoadDailyLogOnStart = loadDailyLog;
-            App.Settings.DontSaveServerLog = ChkDontSaveServerLog.IsChecked == true;
+            App.Settings.SaveServerLog = ChkSaveServerLog.IsChecked == true;
+            App.Settings.CheckForUpdatesAtStart = checkUpdates;
+            App.Settings.AutoRestartOnStuck = autoRestart;
+            App.Settings.StuckDetectionSeconds = stuckSec;
+            App.Settings.AutoRestartIntervalEnabled = intervalEnabled;
+            App.Settings.AutoRestartIntervalMinutes = intervalMin;
 
             // --- Сохранение в файл ---
             mainWin.SaveSettingsToCfg(App.Settings);

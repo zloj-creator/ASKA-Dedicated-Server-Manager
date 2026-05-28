@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace AskaServerManager
 {
@@ -8,6 +8,7 @@ namespace AskaServerManager
         public ConfirmDialog(string message)
         {
             InitializeComponent();
+            NativeMethods.SetDarkTitleBar(this);
             MessageText.Text = message;
             Owner = System.Windows.Application.Current.MainWindow;
         }

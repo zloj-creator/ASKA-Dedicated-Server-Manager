@@ -1,17 +1,14 @@
-using Microsoft.VisualBasic.FileIO;
+﻿using Microsoft.VisualBasic.FileIO;
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -20,7 +17,6 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Brushes = System.Windows.Media.Brushes;
 using Cursors = System.Windows.Input.Cursors;
-using Media = System.Windows.Media;
 
 namespace AskaServerManager;
 
@@ -54,13 +50,13 @@ public partial class MainWindow : Window
 
 
     // Fields
+    private bool _serverStarting = false;
+    private bool _authFailedHandled = false; // флаг, чтобы не обрабатывать ошибку многократно
+    private int _currentBackupInterval = 0;
     private bool serverStartedLogged = false;
-    private bool showServerLog = false;   // по умолчанию не показывать логи сервера
     private Process? _serverProcess;
     private bool _autoScroll = true;
     private string currentSaveId = "";
-    private System.Media.SoundPlayer? _joinPlayer;
-    private System.Media.SoundPlayer? _leavePlayer;
     private List<string> previousPlayers = [];
     private readonly string logDirectory;
     private string serverExe = "";
@@ -86,10 +82,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer uiTimer;
     private readonly DispatcherTimer pluginTimer;
     private int secondsLeft = 1800;
-    private FileSystemWatcher? settingsWatcher;
-    private DispatcherTimer? settingsChangedTimer;
     private readonly DispatcherTimer logRotationTimer;
-    private bool _soundsAvailable = true;
 
     // Для плавного обновления времени
     private double _smoothTime = 0;
@@ -104,6 +97,18 @@ public partial class MainWindow : Window
     private string _lastSeason = "N/A";
     private int _lastVillagers = 0;
     private int _lastDaysSurvived = 0;
+
+    // Автоматический перезапуск
+    private int _stuckCounter = 0;
+    private double _lastGameTimeRaw = 0;
+    private bool _isAutoRestarting = false;
+    private int _stuckThreshold = 10; // будет вычисляться из StuckDetectionSeconds / 2
+    private DateTime _lastAutoRestartTime = DateTime.MinValue;
+    private int _autoRestartCountInWindow = 0;
+    private DateTime _serverStartTime = DateTime.MinValue;
+    // Автоматический перезапуск по интервалу (с ожиданием игроков)
+    private DispatcherTimer? _intervalRestartTimer;
+    private bool _intervalRestartPending = false;
 
     // ---- File helpers ----
     private static Dictionary<string, string> ParseCfgFile(string filePath)
@@ -127,24 +132,30 @@ public partial class MainWindow : Window
     public void SaveSettingsToCfg(AppSettings settings)
     {
         var lines = new List<string>
-        {
-            "# ASKA Server Manager configuration file",
-            $"ServerDirectory = {settings.ServerDirectory}",
-            $"ServerExecutable = {settings.ServerExecutable}",
-            $"PropertiesFileName = {settings.PropertiesFileName}",
-            $"BackupDirectory = {settings.BackupDirectory}",
-            $"SteamAppId = {settings.SteamAppId}",
-            $"BackupIntervalMinutes = {settings.BackupIntervalMinutes}",
-            $"MaxBackupCount = {settings.MaxBackupCount}",
-            $"QueryIP = {settings.QueryIP}",
-            $"QueryPort = {settings.QueryPort}",
-            $"MaxLogSizeMB = {settings.MaxLogSizeMB}",
-            $"MaxLogFiles = {settings.MaxLogFiles}",
-            $"BackupOnStop = {(settings.BackupOnStop ? "true" : "false")}",
-            $"LoadDailyLogOnStart = {(settings.LoadDailyLogOnStart ? "true" : "false")}",
-            $"ShowServerLog = {(showServerLog ? "true" : "false")}",
-            $"DontSaveServerLog = {(settings.DontSaveServerLog ? "true" : "false")}"
-        };
+    {
+        "# ASKA Server Manager configuration file",
+        $"ServerDirectory = {settings.ServerDirectory}",
+        $"ServerExecutable = {settings.ServerExecutable}",
+        $"PropertiesFileName = {settings.PropertiesFileName}",
+        $"BackupDirectory = {settings.BackupDirectory}",
+        $"SteamAppId = {settings.SteamAppId}",
+        $"BackupIntervalMinutes = {settings.BackupIntervalMinutes}",
+        $"MaxBackupCount = {settings.MaxBackupCount}",
+        $"QueryIP = {settings.QueryIP}",
+        $"QueryPort = {settings.QueryPort}",
+        $"MaxLogSizeMB = {settings.MaxLogSizeMB}",
+        $"MaxLogFiles = {settings.MaxLogFiles}",
+        $"BackupOnStop = {(settings.BackupOnStop ? "true" : "false")}",
+        $"LoadDailyLogOnStart = {(settings.LoadDailyLogOnStart ? "true" : "false")}",
+        $"ShowServerLog = {(App.Settings?.ShowServerLog ?? false ? "true" : "false")}",
+        $"SaveServerLog = {(settings.SaveServerLog ? "true" : "false")}",
+        $"CheckForUpdatesAtStart = {(settings.CheckForUpdatesAtStart ? "true" : "false")}",
+        $"AutoRestartOnStuck = {(settings.AutoRestartOnStuck ? "true" : "false")}",
+        $"StuckDetectionSeconds = {settings.StuckDetectionSeconds}",
+        // Новые параметры
+        $"AutoRestartIntervalEnabled = {(settings.AutoRestartIntervalEnabled ? "true" : "false")}",
+        $"AutoRestartIntervalMinutes = {settings.AutoRestartIntervalMinutes}"
+    };
         File.WriteAllLines(settingsPath, lines);
     }
 
@@ -181,7 +192,81 @@ public partial class MainWindow : Window
     private void OnServerOutput(object sender, DataReceivedEventArgs e)
     {
         if (!string.IsNullOrEmpty(e.Data))
+        {
             Dispatcher.Invoke(() => Log(e.Data, "SERVER"));
+
+            // Проверка на ошибку аутентификации токена
+            if (!_authFailedHandled && e.Data.Contains("Disconnected with reason: CustomAuthenticationFailed"))
+            {
+                _authFailedHandled = true;
+
+                // Вывод сообщений об ошибке в UI
+                Dispatcher.Invoke(() =>
+                {
+                    Log("", "ERROR");
+                    Log("=== AUTHENTICATION FAILURE ===", "ERROR");
+                    Log("The server could not authenticate with Steam because", "ERROR");
+                    Log("the 'authentication token' is missing or invalid.", "ERROR");
+                    Log("Please follow these steps to create a token:", "ERROR");
+                    Log("1. Visit: https://steamcommunity.com/dev/managegameservers", "ERROR");
+                    Log("2. Log in with your Steam account.", "ERROR");
+                    Log("3. Create a new token using App ID: 1898300 (name ASKA server).", "ERROR");
+                    Log("4. Copy the generated token.", "ERROR");
+                    Log("5. Open menu Server - Edit Configuration and paste token:", "ERROR");
+                    Log("6. Click Save and Start server again.", "ERROR");
+                    Log(" ", "ERROR");
+                    Log("The server will now be forcefully terminated to prevent restart loops.", "ERROR");
+                });
+
+                // Принудительное завершение процесса сервера (Kill), чтобы предотвратить автоперезапуск
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        // Небольшая задержка, чтобы сообщения успели отобразиться
+                        Task.Delay(500).Wait();
+
+                        var proc = GetServerProcess() ?? _serverProcess;
+                        if (proc != null && !proc.HasExited)
+                        {
+                            Log("Forcefully terminating the server process...", "WARN");
+                            proc.Kill();
+                            proc.WaitForExit(3000);
+                            Log("Server process terminated.", "INFO");
+                            _serverStarting = false;
+                        }
+
+                        // Очистка ресурсов
+                        if (_serverProcess != null)
+                        {
+                            _serverProcess.OutputDataReceived -= OnServerOutput;
+                            _serverProcess.ErrorDataReceived -= OnServerError;
+                            _serverProcess.Dispose();
+                            _serverProcess = null;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"Error during forced termination: {ex.Message}", "ERROR");
+                    }
+                    finally
+                    {
+                        // Обновляем состояние UI
+                        Dispatcher.Invoke(() =>
+                        {
+                            TxtServerStatus.Text = "=== Server offline ===";
+                            BackupProgress.IsIndeterminate = false;
+                            BackupProgress.Value = 100;
+                            serverWasRunning = false;
+                            isStoppingManually = false;
+                            UpdateServerInfo();
+                            UpdateMenuState();
+                            StatusBarText.Text = "Ready";
+                        });
+                    }
+                });
+            }
+        }
     }
 
     private void OnServerError(object sender, DataReceivedEventArgs e)
@@ -301,23 +386,6 @@ public partial class MainWindow : Window
         // Dark titlebar
         NativeMethods.SetDarkTitleBar(this);
 
-        // Sound initialization
-        string soundsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Sounds");
-        string joinPath = Path.Combine(soundsDir, "join.wav");
-        string leavePath = Path.Combine(soundsDir, "leave.wav");
-        if (File.Exists(joinPath) && File.Exists(leavePath))
-        {
-            _joinPlayer = new System.Media.SoundPlayer(joinPath);
-            _leavePlayer = new System.Media.SoundPlayer(leavePath);
-            _joinPlayer.Load();
-            _leavePlayer.Load();
-        }
-        else
-        {
-            _soundsAvailable = false;
-            Log("Sound files missing in Sounds folder. Sound notifications disabled.", "WARN");
-        }
-
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName()?.Version;
         string versionString = version != null ? $"v{version.ToString(3)}" : "v0.0.0";
         string versionString1 = version != null ? version.ToString() : "v0.0.0";
@@ -329,11 +397,13 @@ public partial class MainWindow : Window
         LogScrollViewer.ScrollChanged += (s, e) =>
         {
             if (e.ExtentHeightChange == 0) return;
+
             if (LogScrollViewer.VerticalOffset + LogScrollViewer.ViewportHeight < LogScrollViewer.ExtentHeight - 5)
                 _autoScroll = false;
             else
                 _autoScroll = true;
         };
+
 
         backupTimer = new DispatcherTimer();
         backupTimer.Tick += (s, e) => Task.Run(() => MakeBackup());
@@ -348,16 +418,19 @@ public partial class MainWindow : Window
         logRotationTimer.Start();
 
         // Load settings
-        LoadSettings();
+        LoadSettings(false, false);
+        UpdateMenuState();
+        MenuShowServerLog.IsChecked = App.Settings?.ShowServerLog ?? false;
+        UpdateServerLogMenuItemColor();
+        if (App.Settings?.CheckForUpdatesAtStart == true && isConfigured)
+            _ = CheckForUpdatesAsync(false);
         if (GetServerProcess() != null && _serverProcess == null)
         {
-            Log("Server already running but not started by Manager. Log output will not be captured. Command RESTART to restart server.", "WARN");
+            Log("Server already running but not started by Manager. Server Log will not be shown. Command RESTART to restart server.", "WARN");
         }
 
         if (App.Settings?.LoadDailyLogOnStart == true)
             LoadTodayLog();
-        else
-            Log("Daily log loading disabled in settings.", "INFO");
 
         BtnSendCommand.Click += async (s, e) => await SendCommandToPlugin();
         ConsoleInput.KeyDown += async (s, e) => { if (e.Key == Key.Enter) await SendCommandToPlugin(); };
@@ -373,14 +446,56 @@ public partial class MainWindow : Window
         _gameTimeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _gameTimeTimer.Tick += (s, e) => OnGameTimeTick();
         UpdateServerInfo();
+        LogBox.Document.PageWidth = LogBox.ActualWidth;
+        LogBox.SizeChanged += (s, e) => LogBox.Document.PageWidth = LogBox.ActualWidth;
     }
 
     // Начало
 
+    public void ResetAuthFailedFlag()
+    {
+        _authFailedHandled = false;
+        //Log("Authentication failure flag reset. You can now start the server.", "INFO");
+    }
     private void UpdateServerLogMenuItemColor()
     {
         if (MenuShowServerLog == null) return;
-        MenuShowServerLog.Foreground = showServerLog ? Brushes.White : (SolidColorBrush)FindResource("ForegroundBrush");
+        bool show = App.Settings?.ShowServerLog ?? false;
+        MenuShowServerLog.Foreground = show ? Brushes.White : (SolidColorBrush)FindResource("ForegroundBrush");
+    }
+
+    private void PlayJoinSound()
+    {
+        // Нам больше не нужно проверять _soundsAvailable, так как звуки зашиты в EXE
+        PlayInternalSound("join.wav");
+    }
+
+    private void PlayLeaveSound()
+    {
+        PlayInternalSound("leave.wav");
+    }
+
+    // НОВЫЙ ВСПОМОГАТЕЛЬНЫЙ МЕТОД (добавь его ниже)
+    private void PlayInternalSound(string fileName)
+    {
+        try
+        {
+            var uri = new Uri($"pack://application:,,,/{fileName}");
+            var streamInfo = System.Windows.Application.GetResourceStream(uri);
+
+            if (streamInfo != null)
+            {
+                using (var player = new System.Media.SoundPlayer(streamInfo.Stream))
+                {
+                    player.Play();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Логируем в DEBUG, чтобы не пугать пользователя в обычном логе
+            System.Diagnostics.Debug.WriteLine($"[Sound Error] {fileName}: {ex.Message}");
+        }
     }
 
     private void OnGameTimeTick()
@@ -426,31 +541,41 @@ public partial class MainWindow : Window
     {
         bool serverRunning = GetServerProcess() != null;
 
-        if (serverRunning)
-        {
-            TxtPlayerNames.Text = previousPlayers.Count > 0 ? "In game: " + string.Join(", ", previousPlayers) : "";
-        }
-        else
-        {
+        // Отображение списка игроков (всегда из лога)
+        if (serverRunning && previousPlayers.Count > 0)
+            TxtPlayerNames.Text = "Ingame: " + string.Join(", ", previousPlayers);
+        else if (serverRunning)
             TxtPlayerNames.Text = "";
-        }
+        else
+            TxtPlayerNames.Text = "";
 
         if (!serverRunning)
         {
-            TxtStats.Text = "Players N/A | Time: N/A | Season: N/A | Villagers: N/A | Days Survived: N/A";
+            //TxtStats.Text = "Players N/A | Time: N/A | Season: N/A | Villagers: N/A | Days Survived: N/A";
+            TxtStats.Text = "Players N/A | Time: N/A | Season: N/A | Days Survived: N/A";
             return;
         }
 
-        // Всегда показываем количество игроков из лога
-        string playersPart = $"Players {_lastPlayersCount}/4";
+        // Проверяем, есть ли данные от плагина (значимые значения)
+        bool hasPluginData = _serverGameTimeRaw > 0 || (_lastSeason != null && _lastSeason != "N/A") || _lastVillagers > 0;
 
-        // Данные от плагина всегда считаем валидными (файл свежий)
-        double raw = _smoothTime % 24;
-        int hour = (int)raw;
-        int minute = (int)((raw - hour) * 60);
-        if (minute >= 60) { minute = 0; hour++; }
-        string timeStr = $"{hour:D2}:{minute:D2}";
-        TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Villagers: {_lastVillagers} | Days Survived: {_lastDaysSurvived}";
+        if (hasPluginData)
+        {
+            // Полная информация: игроки, время, сезон, жители, дни
+            string playersPart = $"Players {_lastPlayersCount}/4";
+            double raw = _smoothTime % 24;
+            int hour = (int)raw;
+            int minute = (int)((raw - hour) * 60);
+            if (minute >= 60) { minute = 0; hour++; }
+            string timeStr = $"{hour:D2}:{minute:D2}";
+            //TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Villagers: {_lastVillagers} | Days Survived: {_lastDaysSurvived}";
+            TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Days Survived: {_lastDaysSurvived}";
+        }
+        else
+        {
+            // Плагин не установлен или не отвечает — показываем только игроков (из лога)
+            TxtStats.Text = $"Players {_lastPlayersCount}/4 | Ingame: {(previousPlayers.Count > 0 ? string.Join(", ", previousPlayers) : "none")}";
+        }
     }
 
     private void SetConsoleMode(ConsoleMode mode)
@@ -576,35 +701,46 @@ public partial class MainWindow : Window
 
     private void UpdateServerRam()
     {
-        if (_serverProcess != null && !_serverProcess.HasExited)
+        var proc = GetServerProcess();
+        if (proc != null && !proc.HasExited)
         {
-            long ramMB = _serverProcess.WorkingSet64 / (1024 * 1024);
-            Dispatcher.Invoke(() => TxtServerRam.Text = $"RAM: {ramMB} MB");
+            try
+            {
+                // 🔥 CRITICAL: Update the process info from the OS
+                proc.Refresh();
+
+                // Use PrivateMemorySize64 for accurate game world allocation
+                long ramMB = proc.WorkingSet64 / (1024 * 1024);
+                Dispatcher.Invoke(() => TxtServerRam.Text = $"RAM: {ramMB} MB");
+            }
+            catch { /* Process might have closed during read */ }
         }
-        else Dispatcher.Invoke(() => TxtServerRam.Text = "");
+        else
+        {
+            Dispatcher.Invoke(() => TxtServerRam.Text = "");
+        }
     }
-
-    private void PlayJoinSound()
+    private void IntervalRestartTimer_Tick(object? sender, EventArgs e)
     {
-        if (!_soundsAvailable) return;
-        try { _joinPlayer?.Play(); }
-        catch (Exception ex) { Log($"Join sound error: {ex.Message}", "ERROR"); }
-    }
-
-    private void PlayLeaveSound()
-    {
-        if (!_soundsAvailable) return;
-        try { _leavePlayer?.Play(); }
-        catch (Exception ex) { Log($"Leave sound error: {ex.Message}", "ERROR"); }
+        _intervalRestartTimer?.Stop();
+        _intervalRestartPending = true;
+        Log($"Scheduled restart interval reached. Waiting for players to leave before restarting.", "INTERVAL");
+        // Если игроков нет сейчас – перезапускаем немедленно
+        if (previousPlayers.Count == 0 && !isStoppingManually)
+        {
+            Log("No players online. Restarting now.", "INTERVAL");
+            RestartServer();
+            _intervalRestartPending = false;
+        }
     }
 
     internal void Log(string message, string prefix)
     {
         bool isServerLog = (prefix == "SERVER" || prefix == "SERVER ERR");
-        bool dontSaveServerLog = App.Settings?.DontSaveServerLog == true;
+        bool saveServerLog = App.Settings?.SaveServerLog == true;   // true = сохранять в файл
 
-        // Сохраняем в файл, только если НЕ серверный лог ИЛИ разрешено сохранять (dontSaveServerLog == false)
-        if (!(isServerLog && dontSaveServerLog))
+        // Сохраняем в файл, ТОЛЬКО если НЕ серверный лог ИЛИ разрешено сохранять серверный лог
+        if (!isServerLog || saveServerLog)
         {
             try
             {
@@ -629,13 +765,65 @@ public partial class MainWindow : Window
 
             if (lowerMsg.Contains("the session is now open") && !serverStartedLogged)
             {
+                _isAutoRestarting = false; // сбрасываем флаг после успешного запуска
+                _serverStarting = false;
                 serverStartedLogged = true;
                 Log("Server started successfully!", "CMD");
+                Dispatcher.Invoke(() =>
+                {
+                    StatusBarText.Text = "Ready";
+                    // Сброс индикации запуска
+                    TxtServerStatus.Visibility = Visibility.Collapsed;
+                    BackupProgress.IsIndeterminate = false;
+                    BackupProgress.Value = 100; // восстановить нормальный вид
+                    BackupProgress.Visibility = Visibility.Visible; // будет виден, так как сервер работает
+                                                                    // Показать элементы статистики
+                    TxtStats.Visibility = Visibility.Visible;
+                    TxtPlayerNames.Visibility = Visibility.Visible;
+                    TxtServerRam.Visibility = Visibility.Visible;
+                    TxtBackupTimer.Visibility = Visibility.Visible;
+                    TxtBackupInfo.Visibility = Visibility.Visible;
+
+                    // Запуск таймеров (перенесены сюда)
+                    secondsLeft = backupIntervalMinutes * 60;
+                    TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
+                    backupTimer.Interval = TimeSpan.FromMinutes(backupIntervalMinutes);
+                    backupTimer.Start();
+                    uiTimer.Start();
+                    pluginTimer.Start();
+                    if (_gameTimeTimer != null)
+                    {
+                        _serverGameTimeRaw = 0;
+                        _lastTimerTickTime = DateTime.UtcNow;
+                        _gameTimeTimer.Start();
+                    }
+
+                    // Обновить отображение (чтобы показать RAM и т.д.)
+                    UpdateServerInfo();
+                    Log($"Backup timer activated ({backupIntervalMinutes} minutes).", "CONFIG");
+                    isStoppingManually = false;
+                    UpdateMenuState();
+                    _serverStartTime = DateTime.Now;
+                    // Запуск таймера периодического перезапуска (если включён)
+                    if (App.Settings?.AutoRestartIntervalEnabled == true)
+                    {
+                        _intervalRestartTimer?.Stop();
+                        _intervalRestartTimer = new DispatcherTimer();
+                        _intervalRestartTimer.Interval = TimeSpan.FromMinutes(App.Settings.AutoRestartIntervalMinutes);
+                        _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
+                        _intervalRestartTimer.Start();
+                        Log($"Auto-restart timer started: every {App.Settings.AutoRestartIntervalMinutes} minutes.", "CONFIG");
+                    }
+                    else
+                    {
+                        _intervalRestartTimer?.Stop();
+                    }
+                });
             }
         }
 
         // фильтруем показ серверных логов (!isImportant)
-        if (isServerLog && !showServerLog && !isImportant)
+        if (isServerLog && !(App.Settings?.ShowServerLog ?? false) && !isImportant)
             return;
 
         // отображение в UI
@@ -648,17 +836,18 @@ public partial class MainWindow : Window
                 "PLUGIN" => Brushes.Cyan,
                 "RCON" => Brushes.Magenta,
                 "CMD" => Brushes.LightGreen,
-                "JOIN" => Brushes.LightBlue,
-                "LEAVE" => Brushes.Yellow,
+                "JOIN" => Brushes.Yellow,
+                "LEAVE" => Brushes.GreenYellow,
                 "BACKUP" => Brushes.Goldenrod,
                 "TIMER" => Brushes.DarkCyan,
                 "CONFIG" => Brushes.LightSeaGreen,
                 "SERVER" => Brushes.CornflowerBlue,
                 "SERVER ERR" => Brushes.Red,
                 "DEBUG" => Brushes.Gray,
+                "STEAMCMD" => Brushes.Cyan,
                 _ => Brushes.LightGray
             };
-            var paragraph = new Paragraph { Margin = new Thickness(0), LineHeight = 1 };
+            var paragraph = new Paragraph { Margin = new Thickness(0), LineHeight = 1, TextAlignment = TextAlignment.Left };
             paragraph.Inlines.Add(new Run($"[{DateTime.Now:HH:mm:ss}] ") { Foreground = Brushes.White });
             paragraph.Inlines.Add(new Run($"[{prefix}] ") { Foreground = brush });
             paragraph.Inlines.Add(new Run(message) { Foreground = brush });
@@ -670,55 +859,91 @@ public partial class MainWindow : Window
     private void ParseServerLogForPlayers(string line)
     {
         string trimmed = line.Trim();
-        int idxDisconnected = trimmed.IndexOf("disconnected", StringComparison.OrdinalIgnoreCase);
-        if (idxDisconnected >= 0)
+
+        // Отключение: "<имя> disconnected!"
+        int disconnectIdx = trimmed.IndexOf(" disconnected!", StringComparison.OrdinalIgnoreCase);
+        if (disconnectIdx > 0)
         {
-            string playerName = trimmed.Substring(0, idxDisconnected).Trim();
+            string playerName = trimmed.Substring(0, disconnectIdx).Trim();
             if (previousPlayers.Remove(playerName))
             {
                 Log($"{playerName} disconnected", "LEAVE");
                 PlayLeaveSound();
             }
+            UpdatePlayerCountUI();
+            return;
         }
-        else
+
+        // Подключение: "<имя> connected!"
+        int connectIdx = trimmed.IndexOf(" connected!", StringComparison.OrdinalIgnoreCase);
+        if (connectIdx > 0)
         {
-            int idxConnected = trimmed.IndexOf("connected", StringComparison.OrdinalIgnoreCase);
-            if (idxConnected >= 0)
+            string playerName = trimmed.Substring(0, connectIdx).Trim();
+            if (!string.IsNullOrEmpty(playerName) && !previousPlayers.Contains(playerName))
             {
-                string playerName = trimmed.Substring(0, idxConnected).Trim();
-                if (!string.IsNullOrEmpty(playerName) && !previousPlayers.Contains(playerName))
-                {
-                    previousPlayers.Add(playerName);
-                    Log($"{playerName} connected", "JOIN");
-                    PlayJoinSound();
-                }
+                previousPlayers.Add(playerName);
+                Log($"{playerName} connected", "JOIN");
+                PlayJoinSound();
+            }
+            UpdatePlayerCountUI();
+            return;
+        }
+    }
+
+    // Вынес обновление UI в отдельный метод, чтобы не дублировать код
+    private void UpdatePlayerCountUI()
+    {
+        int oldCount = _lastPlayersCount;
+        _lastPlayersCount = previousPlayers.Count;
+
+        // Сброс детекции при переходе от 0 к 1 или от 1 к 0
+        if ((oldCount == 0 && _lastPlayersCount > 0) || (oldCount > 0 && _lastPlayersCount == 0))
+        {
+            ResetStuckDetection();
+
+            // Если ожидается перезапуск по интервалу и игроки вышли
+            if (_intervalRestartPending && !isStoppingManually && _lastPlayersCount == 0)
+            {
+                Log("All players have left. Executing delayed restart.", "INTERVAL");
+                _intervalRestartPending = false;
+                RestartServer();
             }
         }
-        _lastPlayersCount = previousPlayers.Count;
+
         Dispatcher.Invoke(() =>
         {
             TxtPlayerNames.Text = previousPlayers.Count > 0 ? "In game: " + string.Join(", ", previousPlayers) : "";
-            UpdateGameTimeDisplay(); // принудительное обновление инфопанели
+            UpdateGameTimeDisplay();
         });
     }
 
+    private void ResetStuckDetection()
+    {
+        _stuckCounter = 0;
+        _lastGameTimeRaw = 0;
+        DebugLog("Stuck detection reset due to player count change.");
+    }
+
     // ---- Settings handling ----
-    private void LoadSettings(bool silent = false)
+    private void LoadSettings(bool silent = false, bool isReloading = false)
     {
         try
         {
             validationErrors.Clear();
+
+            // Если файла настроек нет – создаём дефолтный и выходим (App.Settings останется null)
             if (!File.Exists(settingsPath))
             {
                 ResetToUnconfiguredState();
                 CreateDefaultSettingsFile();
-                Log("Settings file not found. Default created. Please configure server paths.", "WARN");
+                Log("Please open Settings (⚙️) and specify your Aska server folder.", "WARN");
                 return;
             }
 
             var cfg = ParseCfgFile(settingsPath);
-            var settings = new AppSettings();
 
+            // 1. Создаём временный объект и заполняем ВСЕ настройки из cfg
+            var settings = new AppSettings();
             settings.ServerDirectory = cfg.GetValueOrDefault("ServerDirectory", "");
             settings.ServerExecutable = cfg.GetValueOrDefault("ServerExecutable", "AskaServer.exe");
             settings.PropertiesFileName = cfg.GetValueOrDefault("PropertiesFileName", "");
@@ -732,91 +957,131 @@ public partial class MainWindow : Window
             settings.MaxLogFiles = int.TryParse(cfg.GetValueOrDefault("MaxLogFiles", "100"), out int mf) ? mf : 100;
             settings.BackupOnStop = cfg.GetValueOrDefault("BackupOnStop", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
             settings.LoadDailyLogOnStart = cfg.GetValueOrDefault("LoadDailyLogOnStart", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
-            showServerLog = cfg.GetValueOrDefault("ShowServerLog", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
-            settings.DontSaveServerLog = cfg.GetValueOrDefault("DontSaveServerLog", "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+            settings.SaveServerLog = cfg.GetValueOrDefault("SaveServerLog", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+            settings.CheckForUpdatesAtStart = cfg.GetValueOrDefault("CheckForUpdatesAtStart", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+            settings.AutoRestartOnStuck = cfg.GetValueOrDefault("AutoRestartOnStuck", "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+            settings.StuckDetectionSeconds = int.TryParse(cfg.GetValueOrDefault("StuckDetectionSeconds", "300"), out int stuck) ? stuck : 300;
+            settings.AutoRestartIntervalEnabled = cfg.GetValueOrDefault("AutoRestartIntervalEnabled", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+            settings.AutoRestartIntervalMinutes = int.TryParse(cfg.GetValueOrDefault("AutoRestartIntervalMinutes", "120"), out int intervalMin) ? intervalMin : 120;
 
+            // UI-настройка ShowServerLog (отдельное свойство в AppSettings)
+            bool showServerLogValue = cfg.GetValueOrDefault("ShowServerLog", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+
+            // 2. Валидируем пути (без изменений в App.Settings)
             ValidateSettings(settings);
-            if (validationErrors.Count > 0)
+            bool pathsValid = validationErrors.Count == 0;
+
+            // 3. Всегда присваиваем App.Settings
+            if (App.Settings == null) App.Settings = new AppSettings();
+            App.Settings = settings;
+            App.Settings.ShowServerLog = showServerLogValue; // добавляем UI-настройку
+
+            // Инициализация параметров авто-перезапуска (после того как App.Settings полностью заполнен)
+            _stuckThreshold = App.Settings.StuckDetectionSeconds / 2;
+            if (_stuckThreshold < 1) _stuckThreshold = 1;
+            
+            // 4. Применяем UI-настройки сразу (меню, цвет)
+            MenuShowServerLog.IsChecked = App.Settings.ShowServerLog;
+            UpdateServerLogMenuItemColor();
+                        
+            // 5. Устанавливаем флаг isConfigured...
+            isConfigured = pathsValid;
+
+            if (!pathsValid)
             {
-                Log("ERRORS IN SETTINGS:", "ERROR");
+                Log("ERRORS IN SETTINGS (paths are invalid):", "ERROR");
                 foreach (var err in validationErrors) Log($"  - {err}", "ERROR");
-                ResetToUnconfiguredState();
+                // Не возвращаемся, а показываем панель ошибки. App.Settings уже загружен.
+                UnconfiguredPanel.Visibility = Visibility.Visible;
+                if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Collapsed;
+                ServerInfoPanel.Visibility = Visibility.Collapsed;
+                EnableServerControls(false);
+                // Остальное (таймеры и т.д.) не инициализируем, так как пути невалидны
                 return;
             }
 
-            App.Settings = settings;
-            showServerLog = App.Settings.ShowServerLog;
-            MenuShowServerLog.IsChecked = showServerLog;
-            UpdateServerLogMenuItemColor();
-            UpdateSettingsWithDefaults(settings);
-            backupIntervalMinutes = settings.BackupIntervalMinutes;
-            maxBackupCount = settings.MaxBackupCount;
-            isConfigured = true;
+            // --- Валидация успешна ---
+            int newInterval = App.Settings.BackupIntervalMinutes;
+            bool intervalChanged = (newInterval != _currentBackupInterval) && (_currentBackupInterval != 0);
+            _currentBackupInterval = newInterval;
 
+            UpdateSettingsWithDefaults(App.Settings);
+            backupIntervalMinutes = App.Settings.BackupIntervalMinutes;
+            maxBackupCount = App.Settings.MaxBackupCount;
+
+            // Вычисление путей
             string localLowPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData).Replace("Local", "LocalLow"));
             savePath = Path.Combine(localLowPath, "Sand Sailor Studio", "Aska", "data", "server");
-            serverExe = Path.Combine(settings.ServerDirectory, settings.ServerExecutable);
-            propertiesFilePath = Path.Combine(settings.ServerDirectory, settings.PropertiesFileName);
-            backupDir = settings.BackupDirectory;
+            serverExe = Path.Combine(App.Settings.ServerDirectory, App.Settings.ServerExecutable);
+            propertiesFilePath = Path.Combine(App.Settings.ServerDirectory, App.Settings.PropertiesFileName);
+            backupDir = App.Settings.BackupDirectory;
             if (string.IsNullOrWhiteSpace(backupDir))
             {
                 backupDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ASKA_Server_Backup");
-                settings.BackupDirectory = backupDir;
+                App.Settings.BackupDirectory = backupDir;
                 Log($"Backup folder not specified. Default set to: {backupDir}", "INFO");
-                SaveSettingsToCfg(settings);
+                if (!Directory.Exists(backupDir))
+                    Directory.CreateDirectory(backupDir);
+                SaveSettingsToCfg(App.Settings);
             }
 
-            if (!Path.IsPathRooted(settings.BackupDirectory))
+            if (!Path.IsPathRooted(App.Settings.BackupDirectory))
             {
-                settings.BackupDirectory = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, settings.BackupDirectory));
-                Log($"Backup directory: {settings.BackupDirectory}", "INFO");
+                App.Settings.BackupDirectory = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, App.Settings.BackupDirectory));
+                Log($"Backup directory: {App.Settings.BackupDirectory}", "INFO");
             }
 
-            if (!string.IsNullOrEmpty(settings.QueryIP)) queryIP = settings.QueryIP;
-            if (settings.QueryPort > 0) queryPort = settings.QueryPort;
+            if (!string.IsNullOrEmpty(App.Settings.QueryIP)) queryIP = App.Settings.QueryIP;
+            if (App.Settings.QueryPort > 0) queryPort = App.Settings.QueryPort;
 
             EnableServerControls(true);
-            UnconfiguredPanel.Visibility = Visibility.Collapsed;
-            ServerInfoPanel.Visibility = Visibility.Visible;
-            WatchSettingsFile();
 
-            //TxtBackupTimer.Visibility = Visibility.Visible;
-            //TxtBackupInfo.Visibility = Visibility.Visible;
+            // Обновление панелей
+            bool serverInstalled = File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe"));
+            if (serverInstalled)
+            {
+                UnconfiguredPanel.Visibility = Visibility.Collapsed;
+                if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Collapsed;
+                ServerInfoPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                UnconfiguredPanel.Visibility = Visibility.Collapsed;
+                if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Visible;
+                ServerInfoPanel.Visibility = Visibility.Collapsed;
+            }
+
             UpdateBackupInfo();
 
-            secondsLeft = backupIntervalMinutes * 60;
-            TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
-            BackupProgress.Value = 100;
-
-            if (!silent)
+            var serverProc = GetServerProcess();
+            if (serverProc != null)
             {
-                Log("Manager settings loaded successfully.", "CMD");
-                Log($"  Server: {NormalizePathForDisplay(serverExe)}", "INFO");
-                Log($"  Config: {NormalizePathForDisplay(propertiesFilePath)}", "INFO");
-                Log($"  Backups: {NormalizePathForDisplay(backupDir)}", "INFO");
-                Log($"  Backup interval: {backupIntervalMinutes} minutes", "INFO");
-                Log($"  Keep backups: {maxBackupCount}", "INFO");
-                Log($"  Max log size: {App.Settings.MaxLogSizeMB} MB, files: {App.Settings.MaxLogFiles}", "INFO");
-            }
-
-            if (GetServerProcess() != null)
-            {
-                backupTimer.Interval = TimeSpan.FromMinutes(backupIntervalMinutes);
-                backupTimer.Start();
-                uiTimer.Start();
-                pluginTimer.Start();
-                if (_gameTimeTimer != null)
+                if (isReloading && !intervalChanged)
                 {
-                    _serverGameTimeRaw = 0;
-                    _lastTimerTickTime = DateTime.UtcNow;
-                    _gameTimeTimer.Start();
+                    if (!backupTimer.IsEnabled) backupTimer.Start();
+                    if (!uiTimer.IsEnabled) uiTimer.Start();
+                    if (!pluginTimer.IsEnabled) pluginTimer.Start();
                 }
-                secondsLeft = backupIntervalMinutes * 60;
-                TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
-                BackupProgress.Value = 100;
-                Log("Backup and plugin timers activated.", "INFO");
+                else
+                {
+                    backupTimer.Interval = TimeSpan.FromMinutes(backupIntervalMinutes);
+                    backupTimer.Start();
+                    uiTimer.Start();
+                    pluginTimer.Start();
+                    if (_gameTimeTimer != null)
+                    {
+                        _serverGameTimeRaw = 0;
+                        _lastTimerTickTime = DateTime.UtcNow;
+                        _gameTimeTimer.Start();
+                    }
+                    secondsLeft = backupIntervalMinutes * 60;
+                    TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
+                    BackupProgress.Value = 100;
+                    Log("Backup and plugin timers activated.", "INFO");
+                }
             }
 
+            currentSaveId = GetCurrentSaveId();
             if (!string.IsNullOrEmpty(currentSaveId))
             {
                 string worldFolder = Path.Combine(savePath, $"savegame_{currentSaveId}");
@@ -825,29 +1090,49 @@ public partial class MainWindow : Window
             }
 
             UpdateServerHeader();
+            UpdateMenuState();
 
+            if (!silent)
+            {
+                string fullSavePath = string.IsNullOrEmpty(currentSaveId) ? savePath : Path.Combine(savePath, $"savegame_{currentSaveId}");
+                Log($"Savegame folder: {fullSavePath}", "INFO");
+            }
         }
         catch (Exception ex)
         {
             Log($"Error loading settings: {ex.Message}", "ERROR");
             ResetToUnconfiguredState();
         }
-        currentSaveId = GetCurrentSaveId();
-        string fullSavePath = string.IsNullOrEmpty(currentSaveId) ? savePath : Path.Combine(savePath, $"savegame_{currentSaveId}");
-        if (!silent)
-            Log($"  Savegame folder: {fullSavePath}", "INFO");
     }
 
     private void ValidateSettings(AppSettings settings)
     {
-        if (string.IsNullOrEmpty(settings.ServerDirectory)) validationErrors.Add("(⚙️) Specify ASKA server directory");
-        else if (!Directory.Exists(settings.ServerDirectory)) validationErrors.Add($"Server directory does not exist: {settings.ServerDirectory}");
-        if (string.IsNullOrEmpty(settings.PropertiesFileName)) validationErrors.Add("(⚙️) Specify server config file path");
-        else if (!File.Exists(Path.Combine(settings.ServerDirectory, settings.PropertiesFileName))) validationErrors.Add($"Config file not found: {settings.PropertiesFileName}");
-        if (settings.BackupIntervalMinutes < 1 || settings.BackupIntervalMinutes > 1440) validationErrors.Add($"BackupIntervalMinutes must be between 1 and 1440.");
-        if (settings.MaxBackupCount < 1 || settings.MaxBackupCount > 100) validationErrors.Add($"MaxBackupCount must be between 1 and 100");
-        if (settings.MaxLogSizeMB < 1 || settings.MaxLogSizeMB > 100) validationErrors.Add($"MaxLogSizeMB must be between 1 and 100");
-        if (settings.MaxLogFiles < 1 || settings.MaxLogFiles > 1000) validationErrors.Add($"MaxLogFiles must be between 1 and 1000");
+        // Определяем, установлен ли сервер
+        string serverExePath = Path.Combine(settings.ServerDirectory, "AskaServer.exe");
+        bool serverInstalled = File.Exists(serverExePath);
+
+        if (string.IsNullOrEmpty(settings.ServerDirectory))
+            validationErrors.Add("(⚙️) Specify ASKA server directory");
+        else if (!Directory.Exists(settings.ServerDirectory))
+            validationErrors.Add($"Server directory does not exist: {settings.ServerDirectory}");
+
+        // Проверка конфигурационного файла ТОЛЬКО если сервер установлен
+        if (serverInstalled)
+        {
+            if (string.IsNullOrEmpty(settings.PropertiesFileName))
+                validationErrors.Add("(⚙️) Specify server config file path");
+            else if (!File.Exists(Path.Combine(settings.ServerDirectory, settings.PropertiesFileName)))
+                validationErrors.Add($"Config file not found: {settings.PropertiesFileName}");
+        }
+
+        if (settings.BackupIntervalMinutes < 1 || settings.BackupIntervalMinutes > 1440)
+            validationErrors.Add($"BackupIntervalMinutes must be between 1 and 1440.");
+        if (settings.MaxBackupCount < 1 || settings.MaxBackupCount > 100)
+            validationErrors.Add($"MaxBackupCount must be between 1 and 100");
+        if (settings.MaxLogSizeMB < 1 || settings.MaxLogSizeMB > 100)
+            validationErrors.Add($"MaxLogSizeMB must be between 1 and 100");
+        if (settings.MaxLogFiles < 1 || settings.MaxLogFiles > 1000)
+            validationErrors.Add($"MaxLogFiles must be between 1 and 1000");
     }
 
     private void UpdateSettingsWithDefaults(AppSettings settings)
@@ -877,7 +1162,7 @@ public partial class MainWindow : Window
             "BackupOnStop = false",
             "LoadDailyLogOnStart = false",
             "ShowServerLog = false",
-            "DontSaveServerLog = true"
+            "SaveServerLog = false"
         };
         File.WriteAllLines(settingsPath, lines);
         Log($"Settings file created: {settingsPath}", "INFO");
@@ -894,8 +1179,13 @@ public partial class MainWindow : Window
         backupTimer?.Stop();
         uiTimer?.Stop();
         EnableServerControls(false);
+
+        // Обновляем панели
         UnconfiguredPanel.Visibility = Visibility.Visible;
+        if (ServerMissingPanel != null)
+            ServerMissingPanel.Visibility = Visibility.Collapsed;
         ServerInfoPanel.Visibility = Visibility.Collapsed;
+
         TxtBackupTimer.Visibility = Visibility.Collapsed;
         TxtBackupInfo.Visibility = Visibility.Collapsed;
         TxtStats.Visibility = Visibility.Collapsed;
@@ -908,45 +1198,35 @@ public partial class MainWindow : Window
         if (!Directory.Exists(logDirectory)) Directory.CreateDirectory(logDirectory);
     }
 
-    private void WatchSettingsFile()
-    {
-        settingsWatcher?.Dispose();
-        settingsWatcher = new FileSystemWatcher();
-        settingsWatcher.Path = AppDomain.CurrentDomain.BaseDirectory;
-        settingsWatcher.Filter = "settings.cfg";
-        settingsWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.CreationTime | NotifyFilters.FileName;
-        settingsWatcher.Deleted += (s, e) => Dispatcher.Invoke(() => { ResetToUnconfiguredState(); CreateDefaultSettingsFile(); });
-        settingsWatcher.Changed += OnSettingsChanged;
-        settingsWatcher.EnableRaisingEvents = true;
-    }
-
-    private void OnSettingsChanged(object sender, FileSystemEventArgs e)
-    {
-        if (settingsChangedTimer == null)
-        {
-            settingsChangedTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-            settingsChangedTimer.Tick += (s, ev) =>
-            {
-                settingsChangedTimer.Stop();
-                Dispatcher.Invoke(() =>
-                {
-                    if (File.Exists(settingsPath))
-                    {
-                        Log("Detected settings file change. Applying...", "INFO");
-                        ReloadSettings();
-                    }
-                    else ResetToUnconfiguredState();
-                });
-            };
-        }
-        settingsChangedTimer.Stop();
-        settingsChangedTimer.Start();
-    }
-
     private void ReloadSettings()
     {
         int oldInterval = backupIntervalMinutes;
-        LoadSettings(true);
+        LoadSettings(true, true);
+
+        // Обновляем видимость панелей после перезагрузки
+        if (isConfigured && App.Settings != null)
+        {
+            bool serverInstalled = File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe"));
+            if (serverInstalled)
+            {
+                UnconfiguredPanel.Visibility = Visibility.Collapsed;
+                if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Collapsed;
+                ServerInfoPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                UnconfiguredPanel.Visibility = Visibility.Collapsed;
+                if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Visible;
+                ServerInfoPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+        else
+        {
+            UnconfiguredPanel.Visibility = Visibility.Visible;
+            if (ServerMissingPanel != null) ServerMissingPanel.Visibility = Visibility.Collapsed;
+            ServerInfoPanel.Visibility = Visibility.Collapsed;
+        }
+
         if (isConfigured && GetServerProcess() != null)
         {
             if (oldInterval != backupIntervalMinutes)
@@ -962,6 +1242,21 @@ public partial class MainWindow : Window
                 BackupProgress.Value = 100;
                 Log("Backup timer restarted with new interval.", "INFO");
             }
+            // Перезапуск интервального таймера, если настройки изменились
+            if (App.Settings?.AutoRestartIntervalEnabled == true)
+            {
+                _intervalRestartTimer?.Stop();
+                _intervalRestartTimer = new DispatcherTimer();
+                _intervalRestartTimer.Interval = TimeSpan.FromMinutes(App.Settings.AutoRestartIntervalMinutes);
+                _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
+                _intervalRestartTimer.Start();
+                Log($"Auto-restart timer restarted with new interval: {App.Settings.AutoRestartIntervalMinutes} minutes.", "CONFIG");
+            }
+            else
+            {
+                _intervalRestartTimer?.Stop();
+                _intervalRestartPending = false;
+            }
         }
     }
 
@@ -976,11 +1271,56 @@ public partial class MainWindow : Window
     // ---- Server management ----
     private async void StartServerAsync()
     {
-        if (!isConfigured) { Log("Click (⚙️) Settings and specify ASKA server directory.", "WARN"); return; }
+        _isAutoRestarting = false;
+        _stuckCounter = 0;
+        _lastGameTimeRaw = 0;
+        _intervalRestartPending = false;
+        _intervalRestartTimer?.Stop();
+
+        // Блокировка запуска, если была ошибка аутентификации
+        if (_authFailedHandled)
+        {
+            Log("Server start blocked due to previous authentication failure.", "WARN");
+            Log("Please fix the 'authentication token' in the configuration and try to start server.", "WARN");
+            return;
+        }
+
+        // Расширенная диагностика (без изменений)
+        if (!isConfigured || App.Settings == null)
+        {
+            if (App.Settings == null || string.IsNullOrEmpty(App.Settings.ServerDirectory))
+                Log("Settings not configured. Click (⚙️) Settings and specify ASKA server directory.", "WARN");
+            else if (!File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe")))
+                Log("Server not installed. Use 'Install Server' from menu first.", "WARN");
+            else if (string.IsNullOrEmpty(App.Settings.PropertiesFileName) || !File.Exists(Path.Combine(App.Settings.ServerDirectory, App.Settings.PropertiesFileName)))
+                Log("Configuration file missing. Check your settings.", "WARN");
+            else
+                Log("Configuration error. Please verify settings.", "WARN");
+            return;
+        }
+
         try
         {
             if (!File.Exists(serverExe)) { Log($"Error: server file not found: {NormalizePathForDisplay(serverExe)}", "ERROR"); return; }
             if (!File.Exists(propertiesFilePath)) { Log($"Error: config file not found: {NormalizePathForDisplay(propertiesFilePath)}", "ERROR"); return; }
+
+            // Индикация запуска
+            Dispatcher.Invoke(() =>
+            {
+                TxtServerStatus.Text = "=== Starting Server ===";
+                TxtServerStatus.Visibility = Visibility.Visible;
+                BackupProgress.IsIndeterminate = true;
+                BackupProgress.Visibility = Visibility.Visible;
+                // Скрыть статистику, пока сервер не запустился
+                TxtStats.Visibility = Visibility.Collapsed;
+                TxtPlayerNames.Visibility = Visibility.Collapsed;
+                TxtServerRam.Visibility = Visibility.Collapsed;
+                TxtBackupTimer.Visibility = Visibility.Collapsed;
+                TxtBackupInfo.Visibility = Visibility.Collapsed;
+                StatusBarText.Text = "Starting server...";
+            });
+
+            _serverStarting = true;
 
             ProcessStartInfo psi = new ProcessStartInfo
             {
@@ -1011,30 +1351,51 @@ public partial class MainWindow : Window
             {
                 Log("Server process exited immediately after start!", "ERROR");
                 _serverProcess = null;
+                // Сброс индикации при ошибке
+                Dispatcher.Invoke(() =>
+                {
+                    TxtServerStatus.Text = "=== Server offline ===";
+                    TxtServerStatus.Visibility = Visibility.Visible;
+                    BackupProgress.IsIndeterminate = false;
+                    BackupProgress.Visibility = Visibility.Collapsed;
+                    StatusBarText.Text = "Ready";
+                    UpdateServerInfo(); // покажет оффлайн состояние
+                });
                 return;
             }
 
-            await Task.Delay(10000);
-            secondsLeft = backupIntervalMinutes * 60;
-            BackupProgress.Value = 100;
-            TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
-            backupTimer.Interval = TimeSpan.FromMinutes(backupIntervalMinutes);
-            backupTimer.Start();
-            uiTimer.Start();
-            UpdateServerInfo();
-            Log($"Backup timer activated ({backupIntervalMinutes} minutes).", "CONFIG");
-            serverWasRunning = true;
-            pluginTimer.Start();
-            isStoppingManually = false;
+            // Таймеры больше не запускаем здесь. Они будут запущены после успешного старта (в Log)
+            // Не вызываем await Task.Delay(10000) – убрано
+            // secondsLeft, BackupProgress и т.д. будут установлены при старте
         }
-        catch (Exception ex) { Log($"Error starting server: {ex.Message}", "ERROR"); }
+        catch (Exception ex)
+        {
+            Log($"Error starting server: {ex.Message}", "ERROR");
+            Dispatcher.Invoke(() =>
+            {
+                TxtServerStatus.Text = "=== Server offline ===";
+                TxtServerStatus.Visibility = Visibility.Visible;
+                BackupProgress.IsIndeterminate = false;
+                BackupProgress.Visibility = Visibility.Collapsed;
+                StatusBarText.Text = "Ready";
+                UpdateServerInfo();
+            });
+        }
     }
 
     private async Task StopServer(Process process)
     {
-        serverStartedLogged = false;
-        Dispatcher.Invoke(() => StatusBarText.Text = "Stopping server...");
+        // Защита от повторного вызова
+        if (isStoppingManually)
+        {
+            Log("StopServer already in progress, skipping.", "DEBUG");
+            return;
+        }
+        _serverStarting = false;
         isStoppingManually = true;
+        serverStartedLogged = false;
+
+        Dispatcher.Invoke(() => StatusBarText.Text = "Stopping server...");
         serverWasRunning = false;
         _lastManualStopTime = DateTime.Now;
 
@@ -1043,6 +1404,8 @@ public partial class MainWindow : Window
             Log("Creating backup before stopping server...", "BACKUP");
             await Task.Run(() => MakeBackup());
         }
+
+        // Отписываемся от событий и закрываем процесс
         if (_serverProcess != null)
         {
             _serverProcess.OutputDataReceived -= OnServerOutput;
@@ -1052,62 +1415,119 @@ public partial class MainWindow : Window
             _serverProcess.Close();
             _serverProcess = null;
         }
+
         Log("Stopping server...", "INFO");
 
-        await Task.Run(async () =>
+        // Проверяем, не завершён ли уже процесс
+        if (process.HasExited)
         {
+            Log("Process already exited.", "INFO");
+            isStoppingManually = false;
+            Dispatcher.Invoke(() => StatusBarText.Text = "Ready");
+            Dispatcher.Invoke(() => UpdateMenuState());
+            return;
+        }
+
+        // Пытаемся закрыть окно процесса (если есть)
+        try
+        {
+            List<IntPtr> windows = GetProcessWindows(process.Id);
+            if (windows.Count == 0)
+                process.CloseMainWindow();
+            else
+            {
+                foreach (IntPtr hWnd in windows)
+                    WinApi.SendMessage(hWnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Error sending close message: {ex.Message}", "WARN");
+        }
+
+        // Асинхронное ожидание завершения с таймаутом (20 секунд)
+        const int timeoutMs = 20000;
+        int elapsed = 0;
+        while (!process.HasExited && elapsed < timeoutMs)
+        {
+            await Task.Delay(100);
+            process.Refresh();
+            elapsed += 100;
+        }
+
+        if (!process.HasExited)
+        {
+            Log("Process did not exit gracefully, forcing kill...", "WARN");
             try
             {
-                List<IntPtr> windows = GetProcessWindows(process.Id);
-                if (windows.Count == 0)
-                    process.CloseMainWindow();
-                else
-                    foreach (IntPtr hWnd in windows)
-                        WinApi.SendMessage(hWnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
-
-                while (!process.HasExited)
-                {
-                    await Task.Delay(100);
-                    process.Refresh();
-                }
+                process.Kill();
+                await Task.Delay(500);
             }
-            catch (Exception ex) { Dispatcher.Invoke(() => Log($"Error during stop: {ex.Message}", "ERROR")); }
-        });
+            catch (Exception ex)
+            {
+                Log($"Error killing process: {ex.Message}", "ERROR");
+            }
+        }
 
+        // Очистка состояния (данные)
         previousPlayers.Clear();
         _lastPlayersCount = 0;
-        Dispatcher.Invoke(() => TxtPlayerNames.Text = "");
         _lastSeason = "N/A";
         _lastVillagers = 0;
         _lastDaysSurvived = 0;
-        UpdateGameTimeDisplay();
+
+        // Все UI-обновления – в одном блоке Dispatcher
+        await Dispatcher.InvokeAsync(() =>
+        {
+            TxtPlayerNames.Text = "";
+            UpdateGameTimeDisplay();
+            TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
+            BackupProgress.Value = 100;
+            TxtServerStatus.Text = "=== Server offline ===";
+            TxtServerStatus.Visibility = Visibility.Visible;
+            BackupProgress.IsIndeterminate = false;
+            BackupProgress.Visibility = Visibility.Collapsed;
+            StatusBarText.Text = "Ready";
+            UpdateServerInfo();      // обновит все остальные UI-элементы
+            UpdateMenuState();       // обновит состояние меню
+        });
+
         Log("Server stopped.", "CMD");
+
+        // Сброс флагов и остановка таймеров (без UI)
+        _isAutoRestarting = false;
+        _stuckCounter = 0;
+        _lastGameTimeRaw = 0;
+        _intervalRestartTimer?.Stop();
+        _intervalRestartPending = false;
+        _serverStartTime = DateTime.MinValue;
         backupTimer.Stop();
         uiTimer.Stop();
-        Log($"Backup timer stopped", "TIMER");
+        Log("Backup timer stopped", "TIMER");
         secondsLeft = backupIntervalMinutes * 60;
-        TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
-        BackupProgress.Value = 100;
-        UpdateServerInfo();
+
         pluginTimer.Stop();
         _smoothTime = 0;
         _gameTimeTimer?.Stop();
         _serverGameTimeRaw = 0;
         _lastTimerTickTime = DateTime.MinValue;
-        Dispatcher.Invoke(() => StatusBarText.Text = "Ready");
+
         serverWasRunning = false;
         isStoppingManually = false;
-
     }
 
     private async void RestartServer()
     {
+        _intervalRestartPending = false;
+        _intervalRestartTimer?.Stop();
+
         var process = GetServerProcess();
         if (process == null || process.HasExited)
         {
             Log("Server not running.", "WARN");
             return;
         }
+        Dispatcher.Invoke(() => StatusBarText.Text = "Restarting server...");
         Log("Restarting server...", "INFO");
         await StopServer(process);   // корректно останавливает с сохранением
         Log("Server stopped. Starting in 3 seconds...", "INFO");
@@ -1246,6 +1666,60 @@ public partial class MainWindow : Window
                     _smoothTime += error * 0.7;
             }
 
+            if (App.Settings?.AutoRestartOnStuck == true &&
+            GetServerProcess() != null &&
+            !_serverStarting &&
+            !isStoppingManually &&
+            !_isAutoRestarting &&
+            previousPlayers.Count > 0 &&
+            _serverGameTimeRaw > 0)   // ← ключевое условие: время должно идти
+            {
+                double currentRaw = _serverGameTimeRaw;
+                if (_lastGameTimeRaw > 0)
+                {
+                    double delta = currentRaw - _lastGameTimeRaw;
+                    if (delta <= 0.001)
+                    {
+                        _stuckCounter++;
+                        if (_stuckCounter >= _stuckThreshold)
+                        {
+                            // защита от частых перезапусков
+                            if ((DateTime.Now - _lastAutoRestartTime).TotalMinutes > 5)
+                            {
+                                _autoRestartCountInWindow = 0;
+                                _lastAutoRestartTime = DateTime.Now;
+                            }
+                            _autoRestartCountInWindow++;
+
+                            if (_autoRestartCountInWindow <= 3)
+                            {
+                                Log("Server appears stuck (game time not advancing). Automatic restart triggered.", "WARN");
+                                _isAutoRestarting = true;
+                                _stuckCounter = 0;
+                                _ = Task.Run(() => RestartServer());
+                            }
+                            else
+                            {
+                                Log("Too many automatic restarts in a short time. Auto-restart disabled temporarily.", "ERROR");
+                                App.Settings.AutoRestartOnStuck = false;
+                                SaveSettingsToCfg(App.Settings);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _stuckCounter = 0;
+                    }
+                }
+                _lastGameTimeRaw = currentRaw;
+            }
+            else
+            {
+                // Если нет игроков или время не идёт – сбрасываем счётчик и последнее значение
+                _stuckCounter = 0;
+                _lastGameTimeRaw = 0;
+            }
+
 
             UpdateGameTimeDisplay();
         }
@@ -1254,7 +1728,185 @@ public partial class MainWindow : Window
             Debug.WriteLine($"TryReadPluginDataAsync error: {ex.Message}");
         }
     }
+    // ========== Обработчики меню ==========
+    private async void MenuInstall_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteInstallAsync();
+    }
 
+    private async void MenuUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteUpdateAsync();
+    }
+
+    private async void MenuValidate_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteValidateAsync();
+    }
+
+    private async void MenuCheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckForUpdatesAsync(true);
+    }
+
+    private void MenuEditConfig_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.Settings == null || string.IsNullOrEmpty(App.Settings.ServerDirectory))
+        {
+            Log("Settings not loaded or server directory not configured.", "ERROR");
+            return;
+        }
+        if (!isConfigured)
+        {
+            Log("Settings are not properly configured. Please check settings.", "WARN");
+            return;
+        }
+        string configFile = Path.Combine(App.Settings.ServerDirectory, App.Settings.PropertiesFileName ?? "");
+        if (string.IsNullOrEmpty(App.Settings.PropertiesFileName) || !File.Exists(configFile))
+        {
+            Log($"Configuration file not found: {configFile}. Please check settings.", "WARN");
+            var result = System.Windows.MessageBox.Show("Configuration file not found.\nDo you want to open settings?", "File Missing", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result == MessageBoxResult.Yes)
+                OpenSettingsWindow();
+            return;
+        }
+        var win = new ConfigEditorWindow();
+        win.Owner = this;
+        win.ShowDialog();
+        UpdateServerHeader();
+    }
+
+    private async Task ExecuteInstallAsync()
+    {
+        if (App.Settings == null)
+        {
+            Log("Settings not loaded. Cannot install server.", "ERROR");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(App.Settings.ServerDirectory))
+        {
+            Log("Server directory not configured. Please set it in settings.", "ERROR");
+            return;
+        }
+
+        string serverExePath = Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe");
+        if (File.Exists(serverExePath))
+        {
+            Log("Server already installed. Use 'update' to refresh.", "WARN");
+            return;
+        }
+
+        await RunSteamCmdAsync($"+force_install_dir \"{App.Settings.ServerDirectory}\" +login anonymous +app_update 3246670 +quit", "install");
+    }
+
+    private async Task ExecuteUpdateAsync()
+    {
+        if (App.Settings == null)
+        {
+            Log("Settings not loaded. Cannot update server.", "ERROR");
+            return;
+        }
+        if (!File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe")))
+        {
+            Log("Server not installed. Use 'install' first.", "WARN");
+            return;
+        }
+        await CheckForUpdatesAsync(true);
+        // Если есть обновление (или всегда обновляем), запускаем steamcmd
+        await RunSteamCmdAsync($"+force_install_dir \"{App.Settings.ServerDirectory}\" +login anonymous +app_update 3246670 +quit", "update");
+    }
+
+    private async Task ExecuteValidateAsync()
+    {
+        if (App.Settings == null)
+        {
+            Log("Settings not loaded. Cannot validate server.", "ERROR");
+            return;
+        }
+        if (!File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe")))
+        {
+            Log("Server not installed. Use 'install' first.", "WARN");
+            return;
+        }
+        await RunSteamCmdAsync($"+force_install_dir \"{App.Settings.ServerDirectory}\" +login anonymous +app_update 3246670 validate +quit", "validate");
+    }
+
+    private void ExecuteEditConfig()
+    {
+        if (App.Settings == null)
+        {
+            Log("Settings not loaded. Cannot edit configuration.", "ERROR");
+            return;
+        }
+        if (!isConfigured || string.IsNullOrEmpty(App.Settings.ServerDirectory))
+        {
+            Log("Server directory not configured.", "WARN");
+            return;
+        }
+        string configFile = Path.Combine(App.Settings.ServerDirectory, App.Settings.PropertiesFileName ?? "server_config.txt");
+        if (!File.Exists(configFile))
+        {
+            Log($"Config file not found: {configFile}. Run install first.", "WARN");
+            return;
+        }
+        var win = new ConfigEditorWindow();
+        win.Owner = this;
+        win.ShowDialog();
+    }
+
+    private void UpdateMenuState()
+    {
+        if (App.Settings == null || string.IsNullOrEmpty(App.Settings.ServerDirectory))
+        {
+            // Настройки не заданы – показываем только Install (но он неактивен, пока нет папки)
+            MenuInstall.Visibility = Visibility.Visible;
+            MenuInstall.IsEnabled = false;
+            MenuUpdate.Visibility = Visibility.Collapsed;
+            MenuValidate.Visibility = Visibility.Collapsed;
+            MenuCheckUpdate.Visibility = Visibility.Collapsed;
+            MenuEditConfig.Visibility = Visibility.Collapsed;
+            MenuStartServer.Visibility = Visibility.Collapsed;
+            MenuStopServer.Visibility = Visibility.Collapsed;
+            MenuRestartServer.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        string serverExePath = Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe");
+        bool serverExeExists = File.Exists(serverExePath);
+        bool serverRunning = GetServerProcess() != null;
+
+        // Install Server: виден только если сервер не установлен
+        MenuInstall.Visibility = serverExeExists ? Visibility.Collapsed : Visibility.Visible;
+        MenuInstall.IsEnabled = !string.IsNullOrEmpty(App.Settings.ServerDirectory);
+
+        // Остальные пункты видны только если сервер установлен
+        bool showServerMenus = serverExeExists;
+        MenuUpdate.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        MenuValidate.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        //MenuCheckUpdate.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        MenuEditConfig.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        MenuStartServer.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        MenuStopServer.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+        MenuRestartServer.Visibility = showServerMenus ? Visibility.Visible : Visibility.Collapsed;
+
+        if (serverExeExists)
+        {
+            MenuStartServer.IsEnabled = !serverRunning;
+            MenuStopServer.IsEnabled = serverRunning;
+            MenuRestartServer.IsEnabled = serverRunning;
+        }
+        else
+        {
+            MenuStartServer.IsEnabled = false;
+            MenuStopServer.IsEnabled = false;
+            MenuRestartServer.IsEnabled = false;
+        }
+
+        MenuUpdate.IsEnabled = serverExeExists && !serverRunning;
+        MenuValidate.IsEnabled = serverExeExists && !serverRunning;
+        MenuCheckUpdate.IsEnabled = serverExeExists;
+        MenuEditConfig.IsEnabled = serverExeExists && !serverRunning;
+    }
 
     // ---- Console commands ----
     private async Task SendCommandToPlugin()
@@ -1283,6 +1935,37 @@ public partial class MainWindow : Window
             string subCommand = "get:" + command[7..];
             await SendCommandToPluginAsync(subCommand);
             ConsoleInput.Clear();
+            return;
+        }
+
+        if (command.Equals("install", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExecuteInstallAsync();
+            ConsoleInput.Clear();
+            return;
+        }
+        if (command.Equals("update", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExecuteUpdateAsync();
+            ConsoleInput.Clear();
+            return;
+        }
+        if (command.Equals("validate", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExecuteValidateAsync();
+            ConsoleInput.Clear();
+            return;
+        }
+        if (command.Equals("checkupdate", StringComparison.OrdinalIgnoreCase))
+        {
+            await CheckForUpdatesAsync(true);
+            ConsoleInput.Clear();
+            return;
+        }
+        if (command.Equals("editconfig", StringComparison.OrdinalIgnoreCase))
+        {
+            ConsoleInput.Clear();
+            ExecuteEditConfig();
             return;
         }
 
@@ -1344,11 +2027,11 @@ public partial class MainWindow : Window
             Log("Enjoy the game, Viking!", "CMD");
             ConsoleInput.Clear(); return;
         }
-        if (command.Equals("settings", StringComparison.OrdinalIgnoreCase)) { OpenSettingsWindow(); ConsoleInput.Clear(); return; }
+        if (command.Equals("settings", StringComparison.OrdinalIgnoreCase)) { ConsoleInput.Clear(); OpenSettingsWindow(); return; }
         if (command.Equals("start", StringComparison.OrdinalIgnoreCase))
         {
             if (GetServerProcess() != null) { Log("Server already running", "WARN"); ConsoleInput.Clear(); return; }
-            StartServerAsync(); ConsoleInput.Clear(); return;
+            ConsoleInput.Clear(); StartServerAsync(); return;
         }
         if (command.Equals("stop", StringComparison.OrdinalIgnoreCase))
         {
@@ -1376,16 +2059,25 @@ public partial class MainWindow : Window
         if (command.Equals("list", StringComparison.OrdinalIgnoreCase))
         {
             Log("  Available commands:", "CMD");
-            Log("  info      - show process status", "CMD");
-            Log("  settings  - open settings window", "CMD");
-            Log("  start     - start server", "CMD");
-            Log("  stop      - stop server", "CMD");
-            Log("  restart   - restart server", "CMD");
-            Log("  backup    - create manual backup", "CMD");
-            Log("  list      - show this list", "CMD");
-            Log("  clear     - clear log (with save)", "CMD");
-            Log("  version   - show current Manager version", "CMD");
-            Log("  status    - show server status (plugin)", "PLUGIN");
+            Log("  info          - show server information", "CMD");
+            Log("  settings      - open manager settings window", "CMD");
+            Log("  editconfig    - edit server configuration (if server stopped)", "CMD");
+            Log("  start         - start server", "CMD");
+            Log("  stop          - stop server", "CMD");
+            Log("  restart       - restart server", "CMD");
+            Log("  backup        - create manual backup of game world", "CMD");
+            Log("  install       - install dedicated server via SteamCMD", "CMD");
+            Log("  update        - update server if newer version available", "CMD");
+            Log("  validate      - verify integrity of server files", "CMD");
+            Log("  checkupdate   - manually check for server updates", "CMD");
+            Log("  list          - show this list", "CMD");
+            Log("  clear         - clear log (saves old log first)", "CMD");
+            Log("  version       - show current Manager version", "CMD");
+            Log("  status        - show server status via plugin (if installed)", "PLUGIN");
+            Log("  get:<key>     - query plugin for specific info", "PLUGIN");
+            Log("  /cmd, /c      - switch to local command mode", "CMD");
+            Log("  /plugin, /p   - switch to plugin command mode", "PLUGIN");
+          //Log("  /rcon, /r     - switch to RCON mode (not implemented)", "RCON");
             ConsoleInput.Clear(); return;
         }
         if (command.Equals("clear", StringComparison.OrdinalIgnoreCase))
@@ -1399,12 +2091,309 @@ public partial class MainWindow : Window
         ConsoleInput.Clear();
     }
 
+    private async Task RunSteamCmdAsync(string arguments, string operationName, bool waitForNetwork = true)
+    {
+        if (App.Settings == null) throw new InvalidOperationException("Settings not loaded");
+        if (!isConfigured || string.IsNullOrWhiteSpace(App.Settings?.ServerDirectory))
+        {
+            Log("Server directory not configured. Please set it in settings.", "ERROR");
+            return;
+        }
+
+        if (GetServerProcess() != null)
+        {
+            Log($"Cannot {operationName} while server is running. Stop server first.", "ERROR");
+            return;
+        }
+
+        // 1. Проверяем/скачиваем steamcmd
+        string steamCmdPath = EnsureSteamCmd();
+        if (string.IsNullOrEmpty(steamCmdPath))
+        {
+            Log("Failed to initialize SteamCMD. Check internet connection and firewall.", "ERROR");
+            return;
+        }
+
+        // 2. Запуск с таймаутом для обнаружения проблем фаервола
+        DispatcherTimer timeoutTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };
+        bool completed = false;
+        bool timeoutReached = false;
+        Process? steamProcess = null;
+        int zeroPercentCount = 0;
+
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = steamCmdPath,
+                Arguments = arguments,
+                WorkingDirectory = Path.GetDirectoryName(steamCmdPath),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            steamProcess = Process.Start(psi);
+            if (steamProcess == null) throw new Exception("Failed to start SteamCMD process.");
+
+            StatusBarText.Text = $"{operationName}...";
+            Log($"Starting SteamCMD for {operationName}...", "STEAMCMD");
+
+            steamProcess.OutputDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    // Фильтруем вводящую в заблуждение строку
+                    if (!e.Data.Contains("type 'quit' to exit"))
+                    {
+                        Dispatcher.BeginInvoke(new Action(() => Log(e.Data, "STEAMCMD")));
+                    }
+                    // Обнаружение застревания на 0%
+                    if (e.Data.Contains("0%") && (e.Data.Contains("Downloading") || e.Data.Contains("Connecting")))
+                    {
+                        zeroPercentCount++;
+                        if (zeroPercentCount >= 5 && !completed)
+                        {
+                            Dispatcher.BeginInvoke(new Action(() => { timeoutReached = true; steamProcess?.Kill(); }));
+                        }
+                    }
+                    else if (e.Data.Contains("Success!") || e.Data.Contains("Login Ok") || (e.Data.Contains("Downloading") && e.Data.Contains("%") && !e.Data.Contains("0%")))
+                    {
+                        zeroPercentCount = 0;
+                    }
+                }
+            };
+            steamProcess.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                    Dispatcher.Invoke(() => Log(e.Data, "STEAMCMD ERR"));
+            };
+            steamProcess.BeginOutputReadLine();
+            steamProcess.BeginErrorReadLine();
+
+            timeoutTimer.Tick += (sender, args) =>
+            {
+                if (!completed && steamProcess != null && !steamProcess.HasExited)
+                {
+                    timeoutTimer.Stop();
+                    timeoutReached = true;
+                    Log($"SteamCMD operation timed out (15 sec with no progress). Possible firewall block. Please allow steamcmd.exe and retry.", "ERROR");
+                    try { steamProcess.Kill(); } catch { }
+                }
+            };
+            timeoutTimer.Start();
+
+            await Task.Run(() => steamProcess.WaitForExit());
+            timeoutTimer.Stop();
+            completed = true;
+
+            if (timeoutReached)
+            {
+                Log($"{operationName} aborted due to network/firewall issues.", "ERROR");
+                return;
+            }
+
+            if (steamProcess.ExitCode == 0)
+            {
+                Log($"{operationName} completed successfully.", "STEAMCMD");
+                if (operationName == "install")
+                    OnInstallSuccess();
+                else if (operationName == "update")
+                    await OnUpdateSuccess();
+                else if (operationName == "validate")
+                    Log("File validation finished.", "STEAMCMD");
+            }
+            else if (steamProcess.ExitCode == 7)
+            {
+                Log("SteamCMD has been updated. Please repeat the operation (Update / Install / Validate).", "INFO");
+            }
+            else
+            {
+                Log($"{operationName} failed with exit code {steamProcess.ExitCode}.", "ERROR");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Error during {operationName}: {ex.Message}", "ERROR");
+        }
+        finally
+        {
+            timeoutTimer.Stop();
+            StatusBarText.Text = "Ready";
+            steamProcess?.Dispose();
+        }
+    }
+
+    private string EnsureSteamCmd()
+    {
+        string toolsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Tools", "SteamCmd");
+        string exePath = Path.Combine(toolsDir, "steamcmd.exe");
+        if (File.Exists(exePath)) return exePath;
+
+        Log("SteamCMD not found. Downloading...", "STEAMCMD");
+        try
+        {
+            Directory.CreateDirectory(toolsDir);
+            string zipPath = Path.Combine(toolsDir, "steamcmd.zip");
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                var downloadTask = client.GetByteArrayAsync("https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip");
+                downloadTask.Wait();
+                File.WriteAllBytes(zipPath, downloadTask.Result);
+            }
+            System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, toolsDir, true);
+            File.Delete(zipPath);
+            Log("SteamCMD downloaded and extracted.", "STEAMCMD");
+            return exePath;
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to download SteamCMD: {ex.Message}", "ERROR");
+            return "";
+        }
+    }
+
+    private void OnInstallSuccess()
+    {
+        if (App.Settings == null) return;
+
+        string serverDir = App.Settings.ServerDirectory;
+        string defaultConfig = Path.Combine(serverDir, "server properties.txt");
+        string userConfig = Path.Combine(serverDir, "server_config.txt");
+
+        // Если имя конфига не задано – устанавливаем стандартное
+        if (string.IsNullOrEmpty(App.Settings.PropertiesFileName))
+        {
+            App.Settings.PropertiesFileName = "server properties.txt";
+            Log("Configuration file name was empty, set to default: server properties.txt", "CONFIG");
+        }
+
+        // Если имя конфига равно стандартному "server properties.txt", копируем в server_config.txt и переключаем (сохранение обратной совместимости)
+        if (App.Settings.PropertiesFileName.Equals("server properties.txt", StringComparison.OrdinalIgnoreCase))
+        {
+            if (File.Exists(defaultConfig) && !File.Exists(userConfig))
+            {
+                File.Copy(defaultConfig, userConfig);
+                App.Settings.PropertiesFileName = "server_config.txt";
+                Log($"Copied default config to user config: {userConfig}", "CONFIG");
+            }
+        }
+        else
+        {
+            // Пользователь указал своё имя – проверяем, существует ли файл, если нет – предупреждение
+            string customConfig = Path.Combine(serverDir, App.Settings.PropertiesFileName);
+            if (!File.Exists(customConfig) && File.Exists(defaultConfig))
+            {
+                Log($"Warning: specified config '{App.Settings.PropertiesFileName}' not found. Default config 'server properties.txt' exists but will not be auto-switched.", "WARN");
+            }
+        }
+
+        // Сохраняем настройки
+        SaveSettingsToCfg(App.Settings);
+
+        // Перезагружаем настройки и обновляем UI
+        ReloadSettings();
+        Log("Server installation finished. You can now edit configuration and start the server.", "CMD");
+        UpdateMenuState();
+    }
+
+    private async Task OnUpdateSuccess()
+    {
+        // После успешного обновления сбросить жёлтый LED
+        await CheckForUpdatesAsync(showLog: true);
+    }
+
+    private async Task CheckForUpdatesAsync(bool showLog = false)
+    {
+        // 1. Проверка настроек и пути к серверу
+        if (App.Settings == null || string.IsNullOrEmpty(App.Settings.ServerDirectory))
+        {
+            if (showLog) Log("Server directory not configured.", "WARN");
+            return;
+        }
+        string serverExePath = Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe");
+        if (!File.Exists(serverExePath))
+        {
+            if (showLog) Log("Server not installed. Cannot check updates.", "WARN");
+            return;
+        }
+
+        // 2. Определяем локальный build ID из appmanifest_3246670.acf
+        long localBuildId = 0;
+        string steamCmdDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Tools", "SteamCmd");
+        string manifestPath = Path.Combine(App.Settings.ServerDirectory, "steamapps", "appmanifest_3246670.acf");
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                string content = File.ReadAllText(manifestPath);
+                // Ищем строку "buildid"		"12345678"
+                var match = System.Text.RegularExpressions.Regex.Match(content, "\"buildid\"\\s*\"(\\d+)\"");
+                if (match.Success && long.TryParse(match.Groups[1].Value, out long id))
+                    localBuildId = id;
+            }
+            catch (Exception ex)
+            {
+                if (showLog) Log($"Failed to read local buildid: {ex.Message}", "ERROR");
+            }
+        }
+
+        if (localBuildId == 0)
+        {
+            if (showLog) Log("Cannot determine local server build ID. Ensure SteamCMD has installed the server at least once.", "WARN");
+            return;
+        }
+
+        // 3. Получаем удалённый build ID через API
+        long remoteBuildId = 0;
+        try
+        {
+            using var client = new System.Net.Http.HttpClient();
+            client.Timeout = TimeSpan.FromSeconds(5);
+            string url = "https://api.steamcmd.net/v1/info/3246670";
+            string response = await client.GetStringAsync(url);
+            // Ищем "buildid": 12345678
+            var match = System.Text.RegularExpressions.Regex.Match(response, "\"buildid\"\\s*:\\s*(\\d+)");
+            if (match.Success && long.TryParse(match.Groups[1].Value, out long id))
+                remoteBuildId = id;
+        }
+        catch (Exception ex)
+        {
+            if (showLog) Log($"Failed to fetch remote build ID: {ex.Message}", "ERROR");
+            return;
+        }
+
+        // 4. Сравнение
+        if (localBuildId < remoteBuildId)
+        {
+            Log($"Update available! Local build: {localBuildId}, latest: {remoteBuildId}. Use 'update' command.", "UPDATE");
+            StatusLed.Fill = Brushes.Gold;
+        }
+        else
+        {
+            if (showLog)
+                Log($"Server is up to date (build {localBuildId}).", "UPDATE");
+            if (StatusLed.Fill == Brushes.Gold)
+                UpdateServerInfo(); // сбросит цвет на зелёный/красный в зависимости от состояния
+        }
+    }
+
     // ---- Backup ----
-    private void MakeBackup()
+    public void MakeBackup()
     {
         if (!isConfigured)
         {
-            Log("Backup cancelled: settings not configured.", "WARN");
+            if (App.Settings == null || string.IsNullOrEmpty(App.Settings?.ServerDirectory))
+                Log("Backup cancelled: settings not configured.", "WARN");
+            else if (!File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe")))
+                Log("Backup cancelled: server not installed.", "WARN");
+            else if (string.IsNullOrEmpty(App.Settings.PropertiesFileName) || !File.Exists(Path.Combine(App.Settings.ServerDirectory, App.Settings.PropertiesFileName)))
+                Log("Backup cancelled: configuration file missing.", "WARN");
+            else
+                Log("Backup cancelled: unknown configuration error.", "WARN");
             return;
         }
 
@@ -1461,7 +2450,7 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             TxtBackupTimer.Text = "=== Creating backup ===";
-            TxtServerOff.Text = "";
+            TxtServerStatus.Visibility = Visibility.Collapsed;
             TxtBackupTimer.Visibility = Visibility.Visible;
             TxtBackupInfo.Visibility = Visibility.Collapsed;
             BackupProgress.Visibility = Visibility.Visible;
@@ -1512,7 +2501,8 @@ public partial class MainWindow : Window
                 BackupProgress.IsIndeterminate = false;
                 BackupProgress.Foreground = Brushes.DodgerBlue;
                 StatusBarText.Text = "Ready";
-                TxtServerOff.Text = "=== Server offline ===";
+                //TxtServerStatus.Visibility = Visibility.Visible;
+                UpdateServerInfo();
             });
         }
         catch (Exception ex)
@@ -1575,54 +2565,78 @@ public partial class MainWindow : Window
     {
         if (isBackupInProgress) return; // не трогаем UI, пока идёт бэкап
 
-        bool isRunning = GetServerProcess() != null;
+        var serverProcess = GetServerProcess();
+        bool isRunning = (serverProcess != null && !serverProcess.HasExited);
+
         MenuStartServer.IsEnabled = !isRunning;
         MenuStopServer.IsEnabled = isRunning;
         MenuRestartServer.IsEnabled = isRunning;
 
         if (isRunning && isConfigured)
         {
-            StatusLed.Fill = Brushes.LimeGreen;
-            TxtPlayerNames.Visibility = Visibility.Visible;
-            TxtBackupTimer.Visibility = Visibility.Visible;
-            BackupProgress.Visibility = Visibility.Visible;
-            TxtServerRam.Visibility = Visibility.Visible;
-            TxtStats.Visibility = Visibility.Visible;
-            TxtBackupInfo.Visibility = Visibility.Visible;
-            TxtServerOff.Visibility = Visibility.Collapsed;
+            if (_serverStarting)
+            {
+                // Сервер в процессе запуска: показываем только индикацию, скрываем статистику
+                StatusLed.Fill = Brushes.Gold;
+                TxtPlayerNames.Visibility = Visibility.Collapsed;
+                TxtBackupTimer.Visibility = Visibility.Collapsed;
+                TxtServerRam.Visibility = Visibility.Collapsed;
+                TxtStats.Visibility = Visibility.Collapsed;
+                TxtBackupInfo.Visibility = Visibility.Collapsed;
+                TxtServerStatus.Visibility = Visibility.Visible;
+                TxtServerStatus.Text = "=== Starting Server ===";
+                BackupProgress.Visibility = Visibility.Visible;
+                BackupProgress.IsIndeterminate = true;
+            }
+            else
+            {
+                // Сервер полностью запущен и готов
+                try
+                {
+                    serverProcess!.Refresh();
+                    long ramMb = serverProcess.PrivateMemorySize64 / (1024 * 1024);
+                    TxtServerRam.Text = $"RAM: {ramMb} MB";
+                }
+                catch { }
+
+                StatusLed.Fill = Brushes.LimeGreen;
+                TxtPlayerNames.Visibility = Visibility.Visible;
+                TxtBackupTimer.Visibility = Visibility.Visible;
+                BackupProgress.Visibility = Visibility.Visible;
+                TxtServerRam.Visibility = Visibility.Visible;
+                TxtStats.Visibility = Visibility.Visible;
+                TxtBackupInfo.Visibility = Visibility.Visible;
+                TxtServerStatus.Visibility = Visibility.Collapsed;
+                // Убедимся, что прогресс-бар не в indeterminate режиме
+                BackupProgress.IsIndeterminate = false;
+                if (secondsLeft > 0)
+                    BackupProgress.Value = ((double)secondsLeft / (backupIntervalMinutes * 60)) * 100;
+                else
+                    BackupProgress.Value = 100;
+            }
         }
         else
         {
+            // Сервер не работает
+            _serverStarting = false;
             StatusLed.Fill = Brushes.Red;
             TxtPlayerNames.Visibility = Visibility.Collapsed;
             TxtBackupTimer.Visibility = Visibility.Collapsed;
             BackupProgress.Visibility = Visibility.Collapsed;
             TxtServerRam.Visibility = Visibility.Collapsed;
             TxtStats.Visibility = Visibility.Collapsed;
-            TxtServerOff.Visibility = Visibility.Visible;
+            TxtServerStatus.Text = "=== Server offline ===";
+            TxtServerStatus.Visibility = Visibility.Visible;
             TxtBackupInfo.Visibility = Visibility.Collapsed;
-
+            BackupProgress.IsIndeterminate = false;
+            BackupProgress.Value = 100;
         }
     }
-
-    private void CheckIfServerAlreadyRunning()
-    {
-        var proc = GetServerProcess();
-        if (proc != null)
-        {
-            Log("=== SERVER INFORMATION ===", "CMD");
-            Log($"Detected running process: {proc.ProcessName} (PID: {proc.Id})", "INFO");
-            Log($"Server uptime: {DateTime.Now - proc.StartTime:hh\\:mm\\:ss}", "INFO");
-            Log("Server process detected. Please configure paths in settings to enable monitoring.", "INFO");
-            UpdateServerInfo();
-            UpdateServerHeader();
-            currentSaveId = GetCurrentSaveId();
-        }
-    }
-
+    
     private void CheckServerProcess()
     {
         // Если сервер не был запущен через менеджер, не отслеживаем
+        UpdateMenuState();
         if (_serverProcess == null) return;
 
         bool isRunning = !_serverProcess.HasExited;
@@ -1632,7 +2646,19 @@ public partial class MainWindow : Window
             // Игнорируем, если ручная остановка была меньше 15 секунд назад
             if ((DateTime.Now - _lastManualStopTime).TotalSeconds < 15)
             {
+                UpdateMenuState();
                 serverWasRunning = false;
+                return;
+            }
+
+            // Если была ошибка аутентификации – не перезапускаем, просто очищаем ресурсы
+            if (_authFailedHandled)
+            {
+                Log("Server stopped due to authentication failure. Auto-restart disabled.", "WARN");
+                serverWasRunning = false;
+                _serverProcess.Dispose();
+                _serverProcess = null;
+                UpdateMenuState();
                 return;
             }
 
@@ -1648,12 +2674,13 @@ public partial class MainWindow : Window
             BackupProgress.Value = 100;
             UpdateServerInfo();
             serverWasRunning = false;
-
+            UpdateMenuState();
             _serverProcess.Dispose();
             _serverProcess = null;
         }
         else if (isRunning)
         {
+            UpdateMenuState();
             serverWasRunning = true;
         }
         else
@@ -1668,27 +2695,38 @@ public partial class MainWindow : Window
         var proc = GetServerProcess();
         if (proc != null && !proc.HasExited)
         {
-            Log($"PID: {proc.Id}", "INFO");
-            Log($"Memory: {proc.WorkingSet64 / (1024 * 1024)} MB", "INFO");
-            Log($"Start time: {proc.StartTime}", "INFO");
-            Log($"Uptime: {(DateTime.Now - proc.StartTime):hh\\h\\ mm\\m}", "INFO");
-            var config = ReadServerConfig();
-            if (config.TryGetValue("save id", out string? saveId)) Log($"Save ID: {saveId}", "INFO");
-            if (config.TryGetValue("server name", out string? serverName)) Log($"Server name: {serverName}", "INFO");
-            if (config.TryGetValue("display name", out string? displayName)) Log($"Display name: {displayName}", "INFO");
-            if (config.TryGetValue("seed", out string? seed)) Log($"Seed: {seed}", "INFO");
-            if (config.TryGetValue("region", out string? region)) Log($"Region: {region}", "INFO");
-            if (config.TryGetValue("steam game port", out string? gamePort)) Log($"Game port: {gamePort}", "INFO");
-            if (config.TryGetValue("steam query port", out string? queryPort)) Log($"Query Port: {queryPort}", "INFO");
-            if (config.TryGetValue("keep server world alive", out string? keepAlive))
-                Log($"Keep server world alive: {(keepAlive == "true" ? "True" : "False")}", "INFO");
-            serverWasRunning = true;
+            Log($"  PID: {proc.Id}", "INFO");
+            Log($"  Memory: {proc.WorkingSet64 / (1024 * 1024)} MB", "INFO");
+            Log($"  Start time: {proc.StartTime}", "INFO");
+            Log($"  Uptime: {(DateTime.Now - proc.StartTime):hh\\h\\ mm\\m}", "INFO");
         }
         else
         {
             Log("Server not running", "INFO");
-            serverWasRunning = false;
         }
+
+        // Дополнительная диагностика
+        if (_authFailedHandled)
+            Log("⚠️ Authentication failure flag is set. Server start is blocked.\nPlease check Token in World settings.", "WARN");
+
+        if (!string.IsNullOrEmpty(propertiesFilePath) && File.Exists(propertiesFilePath))
+        {
+            Log("=== SERVER CONFIGURATION ===", "INFO");
+            var config = ReadServerConfig();
+            if (config.Count == 0)
+                Log("Configuration file is empty or unreadable.", "WARN");
+            else
+            {
+                foreach (var kvp in config)
+                    Log($"  {kvp.Key} = {kvp.Value}", "INFO");
+            }
+        }
+        else
+        {
+            Log("Configuration file not found or not set.", "WARN");
+            Log($"Expected path: {propertiesFilePath}", "WARN");
+        }
+
         UpdateServerInfo();
     }
 
@@ -1696,22 +2734,59 @@ public partial class MainWindow : Window
     {
         var dict = new Dictionary<string, string>();
         if (!File.Exists(propertiesFilePath)) return dict;
+
+        // Набор ключей, которые нужно игнорировать
+        var ignoredKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "mode",
+        "terrain aspect",
+        "terrain height",
+        "starting season",
+        "year length",
+        "precipitation",
+        "day length",
+        "structure decay",
+        "clothing decay",
+        "invasion dificulty",
+        "monster density",
+        "monster population",
+        "wulfar population",
+        "herbivore population",
+        "bear population"
+    };
+
         foreach (var line in File.ReadAllLines(propertiesFilePath))
         {
             if (line.TrimStart().StartsWith("//") || string.IsNullOrWhiteSpace(line)) continue;
             int eq = line.IndexOf('=');
-            if (eq > 0) dict[line[..eq].Trim()] = line[(eq + 1)..].Trim();
+            if (eq <= 0) continue;
+            string key = line[..eq].Trim();
+            if (ignoredKeys.Contains(key)) continue; // пропускаем игнорируемые ключи
+            string value = line[(eq + 1)..].Trim();
+            dict[key] = value;
         }
         return dict;
     }
 
-    private void UpdateServerHeader()
+    public void UpdateServerHeader()
     {
+        if (!isConfigured || string.IsNullOrEmpty(propertiesFilePath) || !File.Exists(propertiesFilePath))
+        {
+            TxtDisplayName.Text = "CONFIG MISSING";
+            TxtServerName.Text = "Open settings to fix";
+            TxtDisplayName.Foreground = Brushes.Red;
+            TxtServerName.Foreground = Brushes.Red;
+            return;
+        }
         var cfg = ReadServerConfig();
         TxtDisplayName.Visibility = Visibility.Visible;
         TxtServerName.Visibility = Visibility.Visible;
-        TxtDisplayName.Text = cfg.TryGetValue("display name", out string? displayName) ? displayName.ToUpper() : "DISPLAY NAME";
-        TxtServerName.Text = cfg.TryGetValue("server name", out string? serverName) ? serverName.ToUpper() : "SERVER NAME";
+        string displayName = cfg.TryGetValue("display name", out string? dn) ? dn.ToUpper() : "DISPLAY NAME";
+        string serverName = cfg.TryGetValue("server name", out string? sn) ? sn.ToUpper() : "SERVER NAME";
+        TxtDisplayName.Text = displayName;
+        TxtServerName.Text = serverName;
+        TxtDisplayName.Foreground = (SolidColorBrush)FindResource("ForegroundBrush");
+        TxtServerName.Foreground = (SolidColorBrush)FindResource("ForegroundBrush");
     }
 
     // ---- Menu actions ----
@@ -1721,17 +2796,58 @@ public partial class MainWindow : Window
         {
             string localLow = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData).Replace("Local", "LocalLow"));
             string path = Path.Combine(localLow, "Sand Sailor Studio", "Aska", "data", "server");
-            if (Directory.Exists(path)) Process.Start("explorer.exe", path);
-            else Log($"Savegame folder not found: {path}", "WARN");
+
+            if (Directory.Exists(path))
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true // Это задействует системный проводник напрямую
+                };
+
+                using (System.Diagnostics.Process? p = System.Diagnostics.Process.Start(psi))
+                {
+                    // Запустили и забыли: using очистит ресурсы в Манагере
+                }
+            }
+            else
+            {
+                Log($"Savegame folder not found: {path}", "WARN");
+            }
         }
-        catch (Exception ex) { Log($"Error opening folder: {ex.Message}", "ERROR"); }
+        catch (Exception ex)
+        {
+            Log($"Error opening folder: {ex.Message}", "ERROR");
+        }
     }
+
 
     private void OpenBackupsFolder()
     {
-        if (!string.IsNullOrEmpty(backupDir) && Directory.Exists(backupDir))
-            Process.Start("explorer.exe", backupDir);
-        else Log("Backup folder not configured or does not exist.", "WARN");
+        if (string.IsNullOrEmpty(backupDir))
+        {
+            Log("Backup folder is not configured.", "WARN");
+            return;
+        }
+        if (!Directory.Exists(backupDir))
+        {
+            try
+            {
+                Directory.CreateDirectory(backupDir);
+                Log($"Backup folder created: {backupDir}", "INFO");
+            }
+            catch (Exception ex)
+            {
+                Log($"Cannot create backup folder: {ex.Message}", "ERROR");
+                return;
+            }
+        }
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = backupDir,
+            UseShellExecute = true
+        };
+        using (System.Diagnostics.Process.Start(psi)) { }
     }
 
     private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
@@ -1739,7 +2855,12 @@ public partial class MainWindow : Window
         try
         {
             if (!Directory.Exists(logDirectory)) Directory.CreateDirectory(logDirectory);
-            Process.Start("explorer.exe", logDirectory);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = logDirectory,
+                UseShellExecute = true
+            };
+            using (System.Diagnostics.Process.Start(psi)) { }
             Log($"Opened log folder: {logDirectory}", "INFO");
         }
         catch (Exception ex) { Log($"Error opening log folder: {ex.Message}", "ERROR"); }
@@ -1824,14 +2945,15 @@ public partial class MainWindow : Window
 
     private void ToggleServerLog_Click(object sender, RoutedEventArgs e)
     {
-        showServerLog = MenuShowServerLog.IsChecked;
-        if (App.Settings != null)
+        if (App.Settings == null)
         {
-            App.Settings.ShowServerLog = showServerLog;
-            SaveSettingsToCfg(App.Settings);
+            // Создаём временные настройки по умолчанию
+            App.Settings = new AppSettings();
         }
-        Log($"Show server log: {(showServerLog ? "ON" : "OFF")}", "CONFIG");
+        App.Settings.ShowServerLog = MenuShowServerLog.IsChecked;
+        SaveSettingsToCfg(App.Settings);
         UpdateServerLogMenuItemColor();
+        Log($"Show server log: {(App.Settings.ShowServerLog ? "ON" : "OFF")}", "CONFIG");
     }
 
     private void MenuStartServer_Click(object sender, RoutedEventArgs e) => StartServerAsync();
@@ -1861,6 +2983,7 @@ public partial class MainWindow : Window
             dialog.ShowDialog();
             if (dialog.Result)
             {
+                Dispatcher.Invoke(() => StatusBarText.Text = "Shootdown server and Exit...");
                 e.Cancel = true;
                 await StopServer(runningProcess);
                 // После остановки сервера удаляем временные файлы

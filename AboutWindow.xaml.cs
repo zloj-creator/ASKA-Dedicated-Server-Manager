@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace AskaServerManager
 {
@@ -7,6 +7,7 @@ namespace AskaServerManager
         public AboutWindow()
         {
             InitializeComponent();
+            NativeMethods.SetDarkTitleBar(this);
             Owner = System.Windows.Application.Current.MainWindow;
             VersionText.Text = $"Version: {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version}";
             DotNetVersionText.Text = $".NET Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}";

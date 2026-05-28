@@ -1,4 +1,4 @@
-<Window x:Class="AskaServerManager.SettingsWindow"
+﻿<Window x:Class="AskaServerManager.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Settings" 
@@ -143,7 +143,7 @@
         <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="0,0,10,0" Margin="0,0,0,10">
             <StackPanel>
                 <!-- Server Paths -->
-                <GroupBox Header="Server Paths">
+                <GroupBox Header="Server Paths and Options">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="180"/>
@@ -154,6 +154,8 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="48"/>
+                            
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Server folder:" VerticalAlignment="Center" Margin="0,8,8,8" TextWrapping="Wrap"/>
@@ -165,6 +167,45 @@
                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Configuration file:" VerticalAlignment="Center" Margin="0,8,8,8" TextWrapping="Wrap"/>
                         <TextBox x:Name="TxtPropertiesFileName" Grid.Row="2" Grid.Column="1" Margin="0,8,8,8" AllowDrop="False" Focusable="False" IsEnabled="True"/>
                         <Button x:Name="BtnBrowsePropertiesFile" Grid.Row="2" Grid.Column="2" Content="Browse" Style="{StaticResource BrowseButtonStyle}" Click="BrowsePropertiesFile_Click" Margin="0,8,0,8"/>
+                        <CheckBox x:Name="ChkCheckUpdatesAtStart" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Content="Check for server updates on Manager startup" Margin="0,8,0,8" Foreground="#CCCCCC"/>
+                        
+                    </Grid>
+                </GroupBox>
+                <GroupBox Header="Restart Options">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Строка 0: Авто-перезапуск по интервалу -->
+                        <CheckBox x:Name="ChkAutoRestartInterval" Grid.Row="0" Grid.Column="0" 
+                  Content="Auto-restart every" Margin="0,8,8,8" Foreground="#CCCCCC"
+                  VerticalAlignment="Center"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Interval (minutes):" 
+                   VerticalAlignment="Center" Margin="8,8,8,8"/>
+                        <TextBox x:Name="TxtAutoRestartIntervalMinutes" Grid.Row="0" Grid.Column="2" 
+                 Width="100" HorizontalAlignment="Left" Text="120" 
+                 PreviewTextInput="NumberValidationTextBox" DataObject.Pasting="PastingHandler"
+                 Margin="0,8,8,8"
+                 IsEnabled="{Binding IsChecked, ElementName=ChkAutoRestartInterval}"/>
+
+                        <!-- Строка 1: Авто-перезапуск при зависании -->
+                        <CheckBox x:Name="ChkAutoRestartOnStuck" Grid.Row="1" Grid.Column="0" 
+                  Content="Auto-restart on server stuck" Margin="0,8,8,8" Foreground="#CCCCCC"
+                  VerticalAlignment="Center"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="Stuck detection delay (sec):" 
+                   VerticalAlignment="Center" Margin="8,8,8,8"/>
+                        <TextBox x:Name="TxtStuckDetectionSeconds" Grid.Row="1" Grid.Column="2" 
+                 Width="100" HorizontalAlignment="Left" Text="300" 
+                 PreviewTextInput="NumberValidationTextBox" DataObject.Pasting="PastingHandler"
+                 Margin="0,8,8,8"
+                 IsEnabled="{Binding IsChecked, ElementName=ChkAutoRestartOnStuck}"/>
                     </Grid>
                 </GroupBox>
 
@@ -232,7 +273,7 @@
                         <TextBox x:Name="TxtMaxLogFiles" Grid.Row="1" Grid.Column="1" PreviewTextInput="NumberValidationTextBox" DataObject.Pasting="PastingHandler" Width="120" 
                                  HorizontalAlignment="Left" Style="{StaticResource SmallTextBox}" Margin="0,8,8,8" Text="100"/>
                         <CheckBox x:Name="ChkLoadDailyLog" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Content="Load daily log file on start" Margin="0,8,0,8" Foreground="#CCCCCC" VerticalAlignment="Center"/>
-                        <CheckBox x:Name="ChkDontSaveServerLog" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Content="Don't save server log to daily file" Margin="0,0,0,8" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                        <CheckBox x:Name="ChkSaveServerLog" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Content="Save Server log to daily log file" Margin="0,0,0,8" Foreground="#CCCCCC" VerticalAlignment="Center"/>
                     </Grid>
                 </GroupBox>
             </StackPanel>
