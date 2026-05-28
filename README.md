@@ -26,13 +26,13 @@ Designed for stability, ease of use, and automated maintenance.
 ### 🧩 AskaMonitor Plugin (Optional)
 To see game time, and seasons, Days Survived, you need to install the monitoring plugin:
 1.  Install **BepInEx 5.4** into your server directory.
-2.  Download `AskaMonitor.dll` from our Releases page.
+2.  Download `AskaMonitor.dll` from our [Releases](https://github.com/zloj-creator/ASKA-Dedicated-Server-Manager/releases)) page.
 3.  Place `AskaMonitor.dll` into the `BepInEx/plugins/` folder on your server.
 
 ---
 
 ### 🛠 Quick Start
-1. **Download:** Get the latest `.exe` from the Releases section.
+1. **Download:** Get the latest version from the [Releases](https://github.com/zloj-creator/ASKA-Dedicated-Server-Manager/releases)) section.
 2. **Configure:** Run the Manager and open **Settings (⚙️)**.
 3. **Paths:** Point to your server directory and configuration file.
 4. **Launch:** Use the **Server** menu or type `start` in the console.
@@ -49,7 +49,7 @@ To see game time, and seasons, Days Survived, you need to install the monitoring
 
 ### 📋 Requirements
 *   **Operating System:** Windows 10 / 11 (64-bit).
-*   **Runtime:** [.NET 8.0 Desktop Runtime](https://microsoft.com) (or newer) must be installed.
+*   **Runtime:** [.NET 10.0 Desktop Runtime](https://microsoft.com) (or newer) must be installed.
 *   **SteamCMD:** Integrated (Manager will handle this for you).
 
 

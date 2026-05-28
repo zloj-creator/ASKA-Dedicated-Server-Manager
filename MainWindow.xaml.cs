@@ -724,11 +724,11 @@ public partial class MainWindow : Window
     {
         _intervalRestartTimer?.Stop();
         _intervalRestartPending = true;
-        Log($"Scheduled restart interval reached. Waiting for players to leave before restarting.", "INTERVAL");
+        Log($"Scheduled restart interval reached. Waiting for players to leave before restarting.", "INFO");
         // Если игроков нет сейчас – перезапускаем немедленно
         if (previousPlayers.Count == 0 && !isStoppingManually)
         {
-            Log("No players online. Restarting now.", "INTERVAL");
+            Log("No players online. Restarting now.", "INFO");
             RestartServer();
             _intervalRestartPending = false;
         }
@@ -904,7 +904,7 @@ public partial class MainWindow : Window
             // Если ожидается перезапуск по интервалу и игроки вышли
             if (_intervalRestartPending && !isStoppingManually && _lastPlayersCount == 0)
             {
-                Log("All players have left. Executing delayed restart.", "INTERVAL");
+                Log("All players have left. Executing delayed restart.", "INFO");
                 _intervalRestartPending = false;
                 RestartServer();
             }
