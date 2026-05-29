@@ -574,7 +574,10 @@ public partial class MainWindow : Window
         else
         {
             // Плагин не установлен или не отвечает — показываем только игроков (из лога)
-            TxtStats.Text = $"Players {_lastPlayersCount}/4 | Ingame: {(previousPlayers.Count > 0 ? string.Join(", ", previousPlayers) : "none")}";
+            if (previousPlayers.Count > 0)
+                TxtStats.Text = $"Players {_lastPlayersCount}/4 | Ingame: {string.Join(", ", previousPlayers)}";
+            else
+                TxtStats.Text = $"Players {_lastPlayersCount}/4";
         }
     }
 
@@ -896,17 +899,38 @@ public partial class MainWindow : Window
         int oldCount = _lastPlayersCount;
         _lastPlayersCount = previousPlayers.Count;
 
-        // Сброс детекции при переходе от 0 к 1 или от 1 к 0
-        if ((oldCount == 0 && _lastPlayersCount > 0) || (oldCount > 0 && _lastPlayersCount == 0))
+        // Реагируем только на изменение количества игроков
+        if (oldCount != _lastPlayersCount)
         {
             ResetStuckDetection();
 
-            // Если ожидается перезапуск по интервалу и игроки вышли
-            if (_intervalRestartPending && !isStoppingManually && _lastPlayersCount == 0)
+            // Случай 1: последний игрок вышел
+            if (oldCount > 0 && _lastPlayersCount == 0)
             {
-                Log("All players have left. Executing delayed restart.", "INFO");
+                // Приоритет: если ожидался перезапуск по интервальному таймеру
+                if (_intervalRestartPending && !isStoppingManually)
+                {
+                    Log("All players have left. Executing delayed restart.", "INFO");
+                    _intervalRestartPending = false;
+                    RestartServer();
+                    return;
+                }
+                // Если включён интервальный перезапуск — перезапускаем сразу
+                if (App.Settings?.AutoRestartIntervalEnabled == true && !isStoppingManually)
+                {
+                    Log("Last player left. Restarting server immediately (scheduled restart enabled).", "INFO");
+                    _intervalRestartTimer?.Stop();
+                    _intervalRestartPending = false;
+                    RestartServer();
+                    return;
+                }
+            }
+            // Случай 2: игрок подключился во время ожидания перезапуска
+            else if (_lastPlayersCount > 0 && _intervalRestartPending)
+            {
+                Log("Player joined during restart delay. Cancelling scheduled restart.", "INFO");
+                _intervalRestartTimer?.Stop();
                 _intervalRestartPending = false;
-                RestartServer();
             }
         }
 
@@ -1200,10 +1224,14 @@ public partial class MainWindow : Window
 
     private void ReloadSettings()
     {
-        int oldInterval = backupIntervalMinutes;
+        // Сохраняем старые значения для интервального перезапуска
+        bool oldIntervalEnabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
+        int oldIntervalMinutes = App.Settings?.AutoRestartIntervalMinutes ?? 120;
+        int oldBackupInterval = backupIntervalMinutes;
+
         LoadSettings(true, true);
 
-        // Обновляем видимость панелей после перезагрузки
+        // Обновление панелей (без изменений)...
         if (isConfigured && App.Settings != null)
         {
             bool serverInstalled = File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe"));
@@ -1227,11 +1255,12 @@ public partial class MainWindow : Window
             ServerInfoPanel.Visibility = Visibility.Collapsed;
         }
 
+        // --- Таймер бэкапа (уже с проверкой) ---
         if (isConfigured && GetServerProcess() != null)
         {
-            if (oldInterval != backupIntervalMinutes)
+            if (oldBackupInterval != backupIntervalMinutes)
             {
-                Log($"Backup interval changed: {oldInterval} -> {backupIntervalMinutes} minutes", "CONFIG");
+                Log($"Backup interval changed: {oldBackupInterval} -> {backupIntervalMinutes} minutes", "CONFIG");
                 uiTimer.Stop();
                 backupTimer.Stop();
                 backupTimer.Interval = TimeSpan.FromMinutes(backupIntervalMinutes);
@@ -1242,20 +1271,29 @@ public partial class MainWindow : Window
                 BackupProgress.Value = 100;
                 Log("Backup timer restarted with new interval.", "INFO");
             }
-            // Перезапуск интервального таймера, если настройки изменились
-            if (App.Settings?.AutoRestartIntervalEnabled == true)
+        }
+
+        // --- Интервальный таймер (только при изменении его настроек) ---
+        if (isConfigured && GetServerProcess() != null && App.Settings != null)
+        {
+            bool newIntervalEnabled = App.Settings.AutoRestartIntervalEnabled;
+            int newIntervalMinutes = App.Settings.AutoRestartIntervalMinutes;
+
+            if (oldIntervalEnabled != newIntervalEnabled || oldIntervalMinutes != newIntervalMinutes)
             {
-                _intervalRestartTimer?.Stop();
-                _intervalRestartTimer = new DispatcherTimer();
-                _intervalRestartTimer.Interval = TimeSpan.FromMinutes(App.Settings.AutoRestartIntervalMinutes);
-                _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
-                _intervalRestartTimer.Start();
-                Log($"Auto-restart timer restarted with new interval: {App.Settings.AutoRestartIntervalMinutes} minutes.", "CONFIG");
-            }
-            else
-            {
+                Log($"Scheduled restart configuration changed: enabled={oldIntervalEnabled}->{newIntervalEnabled}, interval={oldIntervalMinutes}->{newIntervalMinutes} minutes", "CONFIG");
+
                 _intervalRestartTimer?.Stop();
                 _intervalRestartPending = false;
+
+                if (newIntervalEnabled)
+                {
+                    _intervalRestartTimer = new DispatcherTimer();
+                    _intervalRestartTimer.Interval = TimeSpan.FromMinutes(newIntervalMinutes);
+                    _intervalRestartTimer.Tick += IntervalRestartTimer_Tick; // используем существующий метод
+                    _intervalRestartTimer.Start();
+                    Log($"Auto-restart timer restarted with new interval: {newIntervalMinutes} minutes.", "CONFIG");
+                }
             }
         }
     }
@@ -1518,8 +1556,6 @@ public partial class MainWindow : Window
 
     private async void RestartServer()
     {
-        _intervalRestartPending = false;
-        _intervalRestartTimer?.Stop();
 
         var process = GetServerProcess();
         if (process == null || process.HasExited)
@@ -1533,6 +1569,10 @@ public partial class MainWindow : Window
         Log("Server stopped. Starting in 3 seconds...", "INFO");
         await Task.Delay(3000);
         StartServerAsync();
+
+        _intervalRestartPending = false;
+        _intervalRestartTimer?.Stop();
+
     }
 
     private static List<IntPtr> GetProcessWindows(int processId)
@@ -1905,7 +1945,7 @@ public partial class MainWindow : Window
         MenuUpdate.IsEnabled = serverExeExists && !serverRunning;
         MenuValidate.IsEnabled = serverExeExists && !serverRunning;
         MenuCheckUpdate.IsEnabled = serverExeExists;
-        MenuEditConfig.IsEnabled = serverExeExists && !serverRunning;
+        MenuEditConfig.IsEnabled = serverExeExists;
     }
 
     // ---- Console commands ----
@@ -1979,6 +2019,45 @@ public partial class MainWindow : Window
             }
             ConsoleInput.Clear(); // Clear immediately
             await SendCommandToPluginAsync(command);
+            return;
+        }
+        if (command.Equals("timers", StringComparison.OrdinalIgnoreCase))
+        {
+            Log("=== Active Timers ===", "CMD");
+
+            // Таймер бэкапа
+            if (backupTimer.IsEnabled && isConfigured && GetServerProcess() != null)
+            {
+                int mins = secondsLeft / 60;
+                int secs = secondsLeft % 60;
+                Log($"  Backup: {mins:D2}:{secs:D2} remaining", "CMD");
+            }
+            else
+            {
+                Log("  Backup: not active (server not running or backup disabled)", "CMD");
+            }
+
+            // Таймер планового перезапуска
+            if (App.Settings?.AutoRestartIntervalEnabled == true && _intervalRestartTimer?.IsEnabled == true && GetServerProcess() != null)
+            {
+                // Получаем оставшееся время из таймера
+                var nextTick = DateTime.Now.Add(_intervalRestartTimer.Interval);
+                var remaining = nextTick - DateTime.Now;
+                if (remaining.TotalSeconds > 0)
+                {
+                    Log($"  Scheduled restart: {remaining:mm\\:ss} remaining", "CMD");
+                }
+                else
+                {
+                    Log("  Scheduled restart: pending (waiting for players)", "CMD");
+                }
+            }
+            else
+            {
+                Log("  Scheduled restart: not active", "CMD");
+            }
+
+            ConsoleInput.Clear();
             return;
         }
 
@@ -2077,7 +2156,8 @@ public partial class MainWindow : Window
             Log("  get:<key>     - query plugin for specific info", "PLUGIN");
             Log("  /cmd, /c      - switch to local command mode", "CMD");
             Log("  /plugin, /p   - switch to plugin command mode", "PLUGIN");
-          //Log("  /rcon, /r     - switch to RCON mode (not implemented)", "RCON");
+            //Log("  /rcon, /r     - switch to RCON mode (not implemented)", "RCON");
+            Log("  timers        - show remaining time for backup and scheduled restart", "CMD");
             ConsoleInput.Clear(); return;
         }
         if (command.Equals("clear", StringComparison.OrdinalIgnoreCase))
