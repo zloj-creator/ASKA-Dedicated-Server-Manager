@@ -561,23 +561,34 @@ public partial class MainWindow : Window
 
         if (hasPluginData)
         {
-            // Полная информация: игроки, время, сезон, жители, дни
-            string playersPart = $"Players {_lastPlayersCount}/4";
-            double raw = _smoothTime % 24;
-            int hour = (int)raw;
-            int minute = (int)((raw - hour) * 60);
-            if (minute >= 60) { minute = 0; hour++; }
-            string timeStr = $"{hour:D2}:{minute:D2}";
-            //TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Villagers: {_lastVillagers} | Days Survived: {_lastDaysSurvived}";
-            TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Days Survived: {_lastDaysSurvived}";
+            if (previousPlayers.Count == 0)
+            {
+                // Нет игроков – показываем ожидание
+                TxtStats.Text = "Waiting for players";
+            }
+            else
+            {
+                // Полная информация: игроки, время, сезон, дни
+                string playersPart = $"Players {_lastPlayersCount}/4";
+                double raw = _smoothTime % 24;
+                int hour = (int)raw;
+                int minute = (int)((raw - hour) * 60);
+                if (minute >= 60) { minute = 0; hour++; }
+                string timeStr = $"{hour:D2}:{minute:D2}";
+                TxtStats.Text = $"{playersPart} | Time: {timeStr} | Season: {_lastSeason} | Days Survived: {_lastDaysSurvived}";
+            }
         }
         else
         {
-            // Плагин не установлен или не отвечает — показываем только игроков (из лога)
+            // Плагин не установлен или не отвечает
             if (previousPlayers.Count > 0)
+            {
                 TxtStats.Text = $"Players {_lastPlayersCount}/4 | Ingame: {string.Join(", ", previousPlayers)}";
+            }
             else
-                TxtStats.Text = $"Players {_lastPlayersCount}/4";
+            {
+                TxtStats.Text = "Waiting for players";
+            }
         }
     }
 

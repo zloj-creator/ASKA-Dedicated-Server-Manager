@@ -10,8 +10,8 @@
     <AssemblyName>AskaServerManager</AssemblyName>
     <RootNamespace>AskaServerManager</RootNamespace>
 	  <Version>$(AssemblyVersion)</Version>
-    <AssemblyVersion>1.3.4.1229</AssemblyVersion>
-    <FileVersion>1.3.4.1229</FileVersion>
+    <AssemblyVersion>1.3.4.1231</AssemblyVersion>
+    <FileVersion>1.3.4.1231</FileVersion>
     <PackageIcon></PackageIcon>
     <AssemblyTitle>Aska Dedicated Server Manager</AssemblyTitle>
   </PropertyGroup>
