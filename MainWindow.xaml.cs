@@ -738,7 +738,7 @@ public partial class MainWindow : Window
     private void IntervalRestartTimer_Tick(object? sender, EventArgs e)
     {
         _nextRestartTime = DateTime.MinValue;
-        _intervalRestartTimer?.Stop();
+        //_intervalRestartTimer?.Stop();
         _intervalRestartPending = true;
         Log($"Scheduled restart interval reached. Waiting for players to leave before restarting.", "INFO");
         // Если игроков нет сейчас – перезапускаем немедленно
@@ -820,21 +820,7 @@ public partial class MainWindow : Window
                     isStoppingManually = false;
                     UpdateMenuState();
                     _serverStartTime = DateTime.Now;
-                    // Запуск таймера периодического перезапуска (если включён)
-                    if (App.Settings?.AutoRestartIntervalEnabled == true)
-                    {
-                        _intervalRestartTimer?.Stop();
-                        _intervalRestartTimer = new DispatcherTimer();
-                        _intervalRestartTimer.Interval = TimeSpan.FromMinutes(App.Settings.AutoRestartIntervalMinutes);
-                        _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
-                        _intervalRestartTimer.Start();
-                        _nextRestartTime = DateTime.Now.AddMinutes(App.Settings.AutoRestartIntervalMinutes);
-                        Log($"Auto-restart timer started: every {App.Settings.AutoRestartIntervalMinutes} minutes.", "CONFIG");
-                    }
-                    else
-                    {
-                        _intervalRestartTimer?.Stop();
-                    }
+                    RecreateIntervalRestartTimer();
                 });
             }
         }
@@ -1283,23 +1269,29 @@ public partial class MainWindow : Window
             if (oldIntervalEnabled != newIntervalEnabled || oldIntervalMinutes != newIntervalMinutes)
             {
                 Log($"Scheduled restart configuration changed: enabled={oldIntervalEnabled}->{newIntervalEnabled}, interval={oldIntervalMinutes}->{newIntervalMinutes} minutes", "CONFIG");
-
-                _intervalRestartTimer?.Stop();
-                _intervalRestartPending = false;
-                _nextRestartTime = DateTime.MinValue;
-
-                if (newIntervalEnabled)
-                {
-                    _intervalRestartTimer = new DispatcherTimer();
-                    _intervalRestartTimer.Interval = TimeSpan.FromMinutes(newIntervalMinutes);
-                    _intervalRestartTimer.Tick += IntervalRestartTimer_Tick; // используем существующий метод
-                    _intervalRestartTimer.Start();
-                    _nextRestartTime = DateTime.Now.AddMinutes(newIntervalMinutes);
-                    Log($"Auto-restart timer restarted with new interval: {newIntervalMinutes} minutes.", "CONFIG");
-                }
-                
-                
+                RecreateIntervalRestartTimer(); // вызываем единый метод пересоздания
             }
+        }
+    }
+
+    private void RecreateIntervalRestartTimer()
+    {
+        if (!isConfigured || GetServerProcess() == null) return;
+        bool enabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
+        int minutes = App.Settings?.AutoRestartIntervalMinutes ?? 120;
+
+        _intervalRestartTimer?.Stop();
+        _intervalRestartPending = false;
+        _nextRestartTime = DateTime.MinValue;
+
+        if (enabled)
+        {
+            _intervalRestartTimer = new DispatcherTimer();
+            _intervalRestartTimer.Interval = TimeSpan.FromMinutes(minutes);
+            _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
+            _intervalRestartTimer.Start();
+            _nextRestartTime = DateTime.Now.AddMinutes(minutes);
+            Log($"Auto-restart timer (re)created with interval {minutes} minutes.", "CONFIG");
         }
     }
 
@@ -2030,7 +2022,6 @@ public partial class MainWindow : Window
         if (command.Equals("timers", StringComparison.OrdinalIgnoreCase))
         {
             Log("=== Active Timers ===", "CMD");
-
             // Таймер бэкапа
             if (backupTimer.IsEnabled && isConfigured && GetServerProcess() != null)
             {
@@ -2050,14 +2041,17 @@ public partial class MainWindow : Window
                 {
                     var remaining = _nextRestartTime - DateTime.Now;
                     if (remaining.TotalSeconds > 0)
-                        Log($"  Scheduled restart: {remaining:mm\\:ss} remaining", "CMD");
+                    {
+                        int totalSeconds = (int)remaining.TotalSeconds;
+                        int hours = totalSeconds / 3600;
+                        int minutes = (totalSeconds % 3600) / 60;
+                        int seconds = totalSeconds % 60;
+                        Log($"  Scheduled restart: {hours:D2}:{minutes:D2}:{seconds:D2} remaining", "CMD");
+                    }
                     else
                         Log("  Scheduled restart: pending (waiting for players)", "CMD");
                 }
-                else
-                {
-                    Log("  Scheduled restart: pending (waiting for players)", "CMD");
-                }
+                
             }
             else
             {
@@ -2147,7 +2141,7 @@ public partial class MainWindow : Window
             Log("  Available commands:", "CMD");
             Log("  info          - show server information", "CMD");
             Log("  settings      - open manager settings window", "CMD");
-            Log("  editconfig    - edit server configuration (if server stopped)", "CMD");
+            Log("  editconfig    - edit server configuration", "CMD");
             Log("  start         - start server", "CMD");
             Log("  stop          - stop server", "CMD");
             Log("  restart       - restart server", "CMD");
@@ -2158,13 +2152,13 @@ public partial class MainWindow : Window
             Log("  checkupdate   - manually check for server updates", "CMD");
             Log("  list          - show this list", "CMD");
             Log("  clear         - clear log (saves old log first)", "CMD");
+            Log("  timers        - show remaining time for backup/restart timers", "CMD");
             Log("  version       - show current Manager version", "CMD");
+            Log("  /cmd, /c      - switch to local command mode", "CMD");
             Log("  status        - show server status via plugin (if installed)", "PLUGIN");
             Log("  get:<key>     - query plugin for specific info", "PLUGIN");
-            Log("  /cmd, /c      - switch to local command mode", "CMD");
             Log("  /plugin, /p   - switch to plugin command mode", "PLUGIN");
             //Log("  /rcon, /r     - switch to RCON mode (not implemented)", "RCON");
-            Log("  timers        - show remaining time for backup and scheduled restart", "CMD");
             ConsoleInput.Clear(); return;
         }
         if (command.Equals("clear", StringComparison.OrdinalIgnoreCase))
