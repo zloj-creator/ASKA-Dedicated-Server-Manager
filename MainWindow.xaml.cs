@@ -915,28 +915,15 @@ public partial class MainWindow : Window
         {
             ResetStuckDetection();
 
-            // Случай 1: последний игрок вышел
-            if (oldCount > 0 && _lastPlayersCount == 0)
+            // Случай: последний игрок вышел, и ожидается перезапуск по интервальному таймеру
+            if (oldCount > 0 && _lastPlayersCount == 0 && _intervalRestartPending && !isStoppingManually)
             {
-                // Приоритет: если ожидался перезапуск по интервальному таймеру
-                if (_intervalRestartPending && !isStoppingManually)
-                {
-                    Log("All players have left. Executing delayed restart.", "INFO");
-                    _intervalRestartPending = false;
-                    RestartServer();
-                    return;
-                }
-                // Если включён интервальный перезапуск — перезапускаем сразу
-                if (App.Settings?.AutoRestartIntervalEnabled == true && !isStoppingManually)
-                {
-                    Log("Last player left. Restarting server immediately (scheduled restart enabled).", "INFO");
-                    _intervalRestartTimer?.Stop();
-                    _intervalRestartPending = false;
-                    RestartServer();
-                    return;
-                }
+                Log("All players have left. Executing delayed restart.", "INFO");
+                _intervalRestartPending = false;
+                RestartServer();
+                return;
             }
-            // Случай 2: игрок подключился во время ожидания перезапуска
+            // Случай: игрок подключился во время ожидания перезапуска
             else if (_lastPlayersCount > 0 && _intervalRestartPending)
             {
                 Log("Player joined during restart delay. Cancelling scheduled restart.", "INFO");
