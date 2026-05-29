@@ -18,6 +18,7 @@ namespace AskaServerManager
         private bool _worldExists;
         private System.Windows.Controls.ComboBox? _modeCombo = null;
         private List<System.Windows.FrameworkElement> _dependentControlsList = new List<System.Windows.FrameworkElement>();
+        private Dictionary<string, string>? _originalConfig;
 
         // Словарь выпадающих списков
         private static readonly Dictionary<string, List<string>> _options = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
@@ -91,6 +92,7 @@ namespace AskaServerManager
             }
 
             _config = ReadServerConfig(_configPath);
+            _originalConfig = new Dictionary<string, string>(_config, StringComparer.OrdinalIgnoreCase);
 
             string saveId = _config.GetValueOrDefault("save id", "");
             if (!string.IsNullOrEmpty(saveId))
@@ -381,12 +383,22 @@ namespace AskaServerManager
 
         private void Save_Click(object sender, System.Windows.RoutedEventArgs e)
         {
+            // Проверка: были ли реальные изменения конфигурации
+            if (_originalConfig != null && _config.SequenceEqual(_originalConfig))
+            {
+                // Ничего не изменилось – просто закрываем окно
+                this.Close();
+                return;
+            }
+
             try
             {
+                // Создаём резервную копию
                 string backup = _configPath + ".bak";
                 if (System.IO.File.Exists(backup)) System.IO.File.Delete(backup);
                 System.IO.File.Copy(_configPath, backup);
 
+                // Записываем изменения в файл
                 var lines = new List<string>();
                 foreach (string rawLine in System.IO.File.ReadAllLines(_configPath))
                 {
@@ -405,8 +417,27 @@ namespace AskaServerManager
                 }
                 System.IO.File.WriteAllLines(_configPath, lines);
 
+                // Обновляем оригинальную копию после сохранения
+                _originalConfig = new Dictionary<string, string>(_config, StringComparer.OrdinalIgnoreCase);
+
+                // Определяем, запущен ли сервер
+                bool serverRunning = false;
+                if (this.Owner is MainWindow mainWin)
+                {
+                    serverRunning = mainWin.GetServerProcess() != null;
+                }
+
+                // Формируем информативное сообщение
+                string message;
+                if (serverRunning)
+                    message = "Configuration saved. Please restart the server for changes to take effect.";
+                else
+                    message = "Configuration saved.";
+
+                // Выводим сообщение в лог (если Owner – MainWindow)
                 if (this.Owner is MainWindow main)
                 {
+                    main.Log(message, "CONFIG");
                     main.UpdateServerHeader();
                     main.ResetAuthFailedFlag();
                 }

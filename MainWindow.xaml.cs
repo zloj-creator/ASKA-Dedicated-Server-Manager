@@ -712,7 +712,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private Process? GetServerProcess() => Process.GetProcessesByName("AskaServer").FirstOrDefault();
+    public Process? GetServerProcess() => Process.GetProcessesByName("AskaServer").FirstOrDefault();
 
     private void UpdateServerRam()
     {
@@ -1255,7 +1255,7 @@ public partial class MainWindow : Window
                 secondsLeft = backupIntervalMinutes * 60;
                 TxtBackupTimer.Text = $"Until backup: {backupIntervalMinutes:D2}:00";
                 BackupProgress.Value = 100;
-                Log("Backup timer restarted with new interval.", "INFO");
+                Log("Backup timer restarted with new interval.", "CONFIG");
             }
         }
 
@@ -1269,7 +1269,6 @@ public partial class MainWindow : Window
 
     private void RecreateIntervalRestartTimer()
     {
-        Log($"DEBUG: RecreateIntervalRestartTimer called. isConfigured={isConfigured}, serverRunning={GetServerProcess() != null}, enabled={App.Settings?.AutoRestartIntervalEnabled}, minutes={App.Settings?.AutoRestartIntervalMinutes}", "DEBUG");
 
         if (!isConfigured || GetServerProcess() == null) return;
         bool enabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
@@ -1286,7 +1285,7 @@ public partial class MainWindow : Window
             _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
             _intervalRestartTimer.Start();
             _nextRestartTime = DateTime.Now.AddMinutes(minutes);
-            Log($"Auto-restart timer (re)created with interval {minutes} minutes.", "CONFIG");
+            Log($"Auto-restart timer started with interval {minutes} minutes.", "CONFIG");
         }
     }
 
@@ -2133,7 +2132,7 @@ public partial class MainWindow : Window
         }
         if (command.Equals("list", StringComparison.OrdinalIgnoreCase))
         {
-            Log("  Available commands:", "CMD");
+            Log("=== Available commands ===", "CMD");
             Log("  info          - show server information", "CMD");
             Log("  settings      - open manager settings window", "CMD");
             Log("  editconfig    - edit server configuration", "CMD");
@@ -2445,15 +2444,17 @@ public partial class MainWindow : Window
         // 4. Сравнение
         if (localBuildId < remoteBuildId)
         {
-            Log($"Update available! Local build: {localBuildId}, latest: {remoteBuildId}. Use 'update' command.", "UPDATE");
+            Log($"Update available! Local build: {localBuildId}, latest: {remoteBuildId}. Use 'update' command.", "INFO");
             StatusLed.Fill = Brushes.Gold;
         }
         else
         {
             if (showLog)
-                Log($"Server is up to date (build {localBuildId}).", "UPDATE");
+                Log($"Server is up to date (build {localBuildId}).", "INFO");
+            else
+                Log("Server is up to date.", "INFO");   // добавляем эту строку
             if (StatusLed.Fill == Brushes.Gold)
-                UpdateServerInfo(); // сбросит цвет на зелёный/красный в зависимости от состояния
+                UpdateServerInfo();
         }
     }
 
