@@ -1211,14 +1211,13 @@ public partial class MainWindow : Window
 
     private void ReloadSettings()
     {
-        // Сохраняем старые значения для интервального перезапуска
-        bool oldIntervalEnabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
-        int oldIntervalMinutes = App.Settings?.AutoRestartIntervalMinutes ?? 120;
+        // Сохраняем старый интервал бэкапа для сравнения
         int oldBackupInterval = backupIntervalMinutes;
 
+        // Перезагружаем настройки из файла
         LoadSettings(true, true);
 
-        // Обновление панелей (без изменений)...
+        // Обновление панелей (без изменений)
         if (isConfigured && App.Settings != null)
         {
             bool serverInstalled = File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe"));
@@ -1242,7 +1241,7 @@ public partial class MainWindow : Window
             ServerInfoPanel.Visibility = Visibility.Collapsed;
         }
 
-        // --- Таймер бэкапа (уже с проверкой) ---
+        // --- Таймер бэкапа (перезапускаем только если изменился интервал) ---
         if (isConfigured && GetServerProcess() != null)
         {
             if (oldBackupInterval != backupIntervalMinutes)
@@ -1260,22 +1259,18 @@ public partial class MainWindow : Window
             }
         }
 
-        // --- Интервальный таймер (только при изменении его настроек) ---
+        // --- Интервальный таймер (всегда пересоздаём, если сервер работает) ---
         if (isConfigured && GetServerProcess() != null && App.Settings != null)
         {
-            bool newIntervalEnabled = App.Settings.AutoRestartIntervalEnabled;
-            int newIntervalMinutes = App.Settings.AutoRestartIntervalMinutes;
-
-            if (oldIntervalEnabled != newIntervalEnabled || oldIntervalMinutes != newIntervalMinutes)
-            {
-                Log($"Scheduled restart configuration changed: enabled={oldIntervalEnabled}->{newIntervalEnabled}, interval={oldIntervalMinutes}->{newIntervalMinutes} minutes", "CONFIG");
-                RecreateIntervalRestartTimer(); // вызываем единый метод пересоздания
-            }
+            // Принудительно пересоздаём таймер с текущими настройками
+            RecreateIntervalRestartTimer();
         }
     }
 
     private void RecreateIntervalRestartTimer()
     {
+        Log($"DEBUG: RecreateIntervalRestartTimer called. isConfigured={isConfigured}, serverRunning={GetServerProcess() != null}, enabled={App.Settings?.AutoRestartIntervalEnabled}, minutes={App.Settings?.AutoRestartIntervalMinutes}", "DEBUG");
+
         if (!isConfigured || GetServerProcess() == null) return;
         bool enabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
         int minutes = App.Settings?.AutoRestartIntervalMinutes ?? 120;
