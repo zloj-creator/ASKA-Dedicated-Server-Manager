@@ -109,6 +109,7 @@ public partial class MainWindow : Window
     // Автоматический перезапуск по интервалу (с ожиданием игроков)
     private DispatcherTimer? _intervalRestartTimer;
     private bool _intervalRestartPending = false;
+    private DateTime _nextRestartTime = DateTime.MinValue;
 
     // ---- File helpers ----
     private static Dictionary<string, string> ParseCfgFile(string filePath)
@@ -736,6 +737,7 @@ public partial class MainWindow : Window
     }
     private void IntervalRestartTimer_Tick(object? sender, EventArgs e)
     {
+        _nextRestartTime = DateTime.MinValue;
         _intervalRestartTimer?.Stop();
         _intervalRestartPending = true;
         Log($"Scheduled restart interval reached. Waiting for players to leave before restarting.", "INFO");
@@ -826,6 +828,7 @@ public partial class MainWindow : Window
                         _intervalRestartTimer.Interval = TimeSpan.FromMinutes(App.Settings.AutoRestartIntervalMinutes);
                         _intervalRestartTimer.Tick += IntervalRestartTimer_Tick;
                         _intervalRestartTimer.Start();
+                        _nextRestartTime = DateTime.Now.AddMinutes(App.Settings.AutoRestartIntervalMinutes);
                         Log($"Auto-restart timer started: every {App.Settings.AutoRestartIntervalMinutes} minutes.", "CONFIG");
                     }
                     else
@@ -1283,6 +1286,7 @@ public partial class MainWindow : Window
 
                 _intervalRestartTimer?.Stop();
                 _intervalRestartPending = false;
+                _nextRestartTime = DateTime.MinValue;
 
                 if (newIntervalEnabled)
                 {
@@ -1290,8 +1294,11 @@ public partial class MainWindow : Window
                     _intervalRestartTimer.Interval = TimeSpan.FromMinutes(newIntervalMinutes);
                     _intervalRestartTimer.Tick += IntervalRestartTimer_Tick; // используем существующий метод
                     _intervalRestartTimer.Start();
+                    _nextRestartTime = DateTime.Now.AddMinutes(newIntervalMinutes);
                     Log($"Auto-restart timer restarted with new interval: {newIntervalMinutes} minutes.", "CONFIG");
                 }
+                
+                
             }
         }
     }
@@ -1535,6 +1542,7 @@ public partial class MainWindow : Window
         _stuckCounter = 0;
         _lastGameTimeRaw = 0;
         _intervalRestartTimer?.Stop();
+        _nextRestartTime = DateTime.MinValue;
         _intervalRestartPending = false;
         _serverStartTime = DateTime.MinValue;
         backupTimer.Stop();
@@ -2038,12 +2046,13 @@ public partial class MainWindow : Window
             // Таймер планового перезапуска
             if (App.Settings?.AutoRestartIntervalEnabled == true && _intervalRestartTimer?.IsEnabled == true && GetServerProcess() != null)
             {
-                // Получаем оставшееся время из таймера
-                var nextTick = DateTime.Now.Add(_intervalRestartTimer.Interval);
-                var remaining = nextTick - DateTime.Now;
-                if (remaining.TotalSeconds > 0)
+                if (_nextRestartTime != DateTime.MinValue)
                 {
-                    Log($"  Scheduled restart: {remaining:mm\\:ss} remaining", "CMD");
+                    var remaining = _nextRestartTime - DateTime.Now;
+                    if (remaining.TotalSeconds > 0)
+                        Log($"  Scheduled restart: {remaining:mm\\:ss} remaining", "CMD");
+                    else
+                        Log("  Scheduled restart: pending (waiting for players)", "CMD");
                 }
                 else
                 {
