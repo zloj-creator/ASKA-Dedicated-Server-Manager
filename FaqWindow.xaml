@@ -22,7 +22,7 @@
         </Grid.RowDefinitions>
         <TextBlock Text="Frequently Asked Questions" FontSize="16" FontWeight="Bold" Foreground="#D4A017" HorizontalAlignment="Center" Margin="0,0,0,10"/>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <TextBlock x:Name="FaqContent" TextWrapping="Wrap" Foreground="#DDD" FontSize="12" />
+            <TextBlock x:Name="FaqContent" TextWrapping="Wrap" Background="#252525" Foreground="#DDD" FontSize="12" />
         </ScrollViewer>
         <Button Grid.Row="2"
         Content="Close" Click="Close_Click" Margin="0,7,0,-7">

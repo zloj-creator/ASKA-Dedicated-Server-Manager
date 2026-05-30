@@ -1211,13 +1211,15 @@ public partial class MainWindow : Window
 
     private void ReloadSettings()
     {
-        // Сохраняем старый интервал бэкапа для сравнения
+        // Сохраняем старые значения для интервального перезапуска и бэкапа
+        bool oldIntervalEnabled = App.Settings?.AutoRestartIntervalEnabled ?? false;
+        int oldIntervalMinutes = App.Settings?.AutoRestartIntervalMinutes ?? 120;
         int oldBackupInterval = backupIntervalMinutes;
 
         // Перезагружаем настройки из файла
         LoadSettings(true, true);
 
-        // Обновление панелей (без изменений)
+        // Обновление панелей
         if (isConfigured && App.Settings != null)
         {
             bool serverInstalled = File.Exists(Path.Combine(App.Settings.ServerDirectory, "AskaServer.exe"));
@@ -1241,7 +1243,7 @@ public partial class MainWindow : Window
             ServerInfoPanel.Visibility = Visibility.Collapsed;
         }
 
-        // --- Таймер бэкапа (перезапускаем только если изменился интервал) ---
+        // --- Таймер бэкапа (только если изменился интервал) ---
         if (isConfigured && GetServerProcess() != null)
         {
             if (oldBackupInterval != backupIntervalMinutes)
@@ -1259,11 +1261,17 @@ public partial class MainWindow : Window
             }
         }
 
-        // --- Интервальный таймер (всегда пересоздаём, если сервер работает) ---
+        // --- Интервальный таймер (только если изменились его настройки) ---
         if (isConfigured && GetServerProcess() != null && App.Settings != null)
         {
-            // Принудительно пересоздаём таймер с текущими настройками
-            RecreateIntervalRestartTimer();
+            bool newIntervalEnabled = App.Settings.AutoRestartIntervalEnabled;
+            int newIntervalMinutes = App.Settings.AutoRestartIntervalMinutes;
+
+            if (oldIntervalEnabled != newIntervalEnabled || oldIntervalMinutes != newIntervalMinutes)
+            {
+                Log($"Scheduled restart configuration changed: enabled={oldIntervalEnabled}->{newIntervalEnabled}, interval={oldIntervalMinutes}->{newIntervalMinutes} minutes", "CONFIG");
+                RecreateIntervalRestartTimer();
+            }
         }
     }
 
