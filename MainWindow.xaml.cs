@@ -912,13 +912,7 @@ public partial class MainWindow : Window
                 RestartServer();
                 return;
             }
-            // Случай: игрок подключился во время ожидания перезапуска
-            else if (_lastPlayersCount > 0 && _intervalRestartPending)
-            {
-                Log("Player joined during restart delay. Cancelling scheduled restart.", "INFO");
-                _intervalRestartTimer?.Stop();
-                _intervalRestartPending = false;
-            }
+            // Удалён блок, который отменял перезапуск при подключении игрока
         }
 
         Dispatcher.Invoke(() =>
